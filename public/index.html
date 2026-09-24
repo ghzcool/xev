@@ -319,6 +319,7 @@ async function sendRequest() {
   respEl.textContent = "Waiting for LLM response...";
 
   const reqBody = buildRequest();
+  const t0 = performance.now();
 
   try {
     // Call our Node proxy (avoids CORS, uses server-side config)
@@ -364,8 +365,9 @@ async function sendRequest() {
     respEl.className = "response-box success";
     respEl.textContent = JSON.stringify(response, null, 2);
     const tokens = data.usage ? `${data.usage.prompt_tokens || 0} in / ${data.usage.completion_tokens || 0} out` : "unknown";
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
     status.className = "status ok";
-    status.textContent = `OK (${tokens})`;
+    status.textContent = `OK (${tokens}, ${elapsed}s)`;
   } catch (err) {
     respEl.className = "response-box error";
     respEl.textContent = err.message;
