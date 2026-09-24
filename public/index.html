@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Xev - Demo</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; line-height: 1.6; }
+  .container { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 28px; font-weight: 700; color: #fff; }
+  h1 span { color: #e551ba; }
+  .subtitle { color: #888; font-size: 14px; margin-top: 4px; }
+
+  .section { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 20px; margin-top: 20px; }
+  .section-title { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #e551ba; margin-bottom: 12px; }
+
+  label { display: block; font-size: 13px; color: #aaa; margin-bottom: 4px; }
+  input, textarea, select {
+    width: 100%; background: #111; border: 1px solid #444; border-radius: 6px;
+    color: #e0e0e0; padding: 8px 12px; font-size: 14px; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #e551ba; }
+  textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+  .field { margin-bottom: 12px; }
+
+  .question-card {
+    background: #111; border: 1px solid #333; border-radius: 6px; padding: 16px;
+    margin-bottom: 12px; position: relative;
+  }
+  .question-card .remove-btn {
+    position: absolute; top: 8px; right: 8px; background: none; border: none;
+    color: #666; cursor: pointer; font-size: 18px; line-height: 1;
+  }
+  .question-card .remove-btn:hover { color: #e551ba; }
+  .question-header { display: flex; gap: 12px; margin-bottom: 12px; align-items: end; }
+  .question-header .field { margin-bottom: 0; }
+  .question-header input { width: 200px; }
+  .question-header select { width: 140px; flex: none; }
+
+  .criteria-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+  .criteria-row input { flex: 1; }
+  .criteria-row .remove-crit { background: none; border: none; color: #666; cursor: pointer; font-size: 16px; }
+  .criteria-row .remove-crit:hover { color: #e551ba; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
+    border-radius: 6px; border: 1px solid #444; background: #222; color: #e0e0e0;
+    font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  .btn:hover { border-color: #e551ba; color: #fff; }
+  .btn-primary { background: #e551ba; border-color: #e551ba; color: #fff; font-weight: 600; }
+  .btn-primary:hover { background: #d040a0; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-danger { border-color: #c0392b; color: #e74c3c; }
+  .btn-danger:hover { background: #c0392b; color: #fff; }
+
+  .actions { display: flex; gap: 12px; margin-top: 20px; align-items: center; }
+
+  .response-box {
+    background: #111; border: 1px solid #333; border-radius: 6px; padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px;
+    white-space: pre-wrap; word-break: break-word; max-height: 500px; overflow-y: auto;
+    min-height: 60px;
+  }
+  .response-box.error { border-color: #c0392b; color: #e74c3c; }
+  .response-box.success { border-color: #27ae60; }
+
+  .status { font-size: 13px; color: #888; }
+  .status.ok { color: #27ae60; }
+  .status.err { color: #e74c3c; }
+
+  .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #555; border-top-color: #e551ba; border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #333; color: #aaa; }
+  .tag-choice { background: #1a3a5c; color: #5dade2; }
+  .tag-score { background: #3a1a3a; color: #e551ba; }
+  .tag-noul { background: #1a3a1a; color: #27ae60; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span>Xev</span> Demo</h1>
+  <div class="subtitle">Structured LLM evaluation &mdash; TypeSafe-compatible API</div>
+
+  <!-- Config -->
+  <div class="section">
+    <div class="section-title">Configuration</div>
+    <div class="row">
+      <div class="field">
+        <label>LLM Base URL</label>
+        <input id="cfg-url" placeholder="http://127.0.0.1:1234/v1" />
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <input id="cfg-model" placeholder="google/gemma-4-26b-a4b-qat" />
+      </div>
+      <div class="field">
+        <label>API Key <span style="color:#555">(optional for local)</span></label>
+        <input id="cfg-key" type="password" placeholder="not needed for LM Studio" />
+      </div>
+    </div>
+  </div>
+
+  <!-- State -->
+  <div class="section">
+    <div class="section-title">State <span style="text-transform:none;letter-spacing:0;color:#666;font-weight:400">(content to evaluate)</span></div>
+    <div class="field">
+      <textarea id="state" rows="4" placeholder="Paste text, chat log, or JSON here..."></textarea>
+    </div>
+    <div class="preset-bar">
+      <span style="font-size:12px;color:#666;line-height:26px">Presets:</span>
+      <button class="btn btn-sm" onclick="loadPreset('support')">Support Ticket</button>
+      <button class="btn btn-sm" onclick="loadPreset('code')">Code Review</button>
+      <button class="btn btn-sm" onclick="loadPreset('email')">Email Triage</button>
+    </div>
+  </div>
+
+  <!-- Questions -->
+  <div class="section">
+    <div class="section-title">Questions</div>
+    <div id="questions"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-sm" onclick="addQuestion('choice')">+ Choice</button>
+      <button class="btn btn-sm" onclick="addQuestion('score')">+ Score</button>
+      <button class="btn btn-sm" onclick="addQuestion('noul')">+ Noul</button>
+    </div>
+  </div>
+
+  <!-- Request Preview -->
+  <div class="section">
+    <div class="section-title">Request Preview</div>
+    <div class="response-box" id="preview" style="max-height:300px"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button class="btn btn-primary" id="send-btn" onclick="sendRequest()">
+      <span id="send-label">Send Evaluation</span>
+    </button>
+    <span class="status" id="status"></span>
+    <div style="flex:1"></div>
+    <button class="btn btn-sm btn-danger" onclick="clearAll()">Clear All</button>
+  </div>
+
+  <!-- Response -->
+  <div class="section">
+    <div class="section-title">Response</div>
+    <div class="response-box" id="response">No response yet</div>
+  </div>
+</div>
+
+<script>
+const LS_PREFIX = "xev_";
+function save(k, v) { localStorage.setItem(LS_PREFIX + k, v); }
+function load(k, def) { return localStorage.getItem(LS_PREFIX + k) ?? def; }
+
+let questionIdCounter = parseInt(load("qcounter", "0"), 10);
+let questions = JSON.parse(load("questions", "[]"));
+
+// Init config fields
+document.getElementById("cfg-url").value = load("cfg_url", "http://127.0.0.1:1234/v1");
+document.getElementById("cfg-model").value = load("cfg_model", "google/gemma-4-26b-a4b-qat");
+document.getElementById("cfg-key").value = load("cfg_key", "");
+document.getElementById("state").value = load("state", "");
+
+// Persist config on change
+["cfg-url", "cfg-model", "cfg-key", "state"].forEach(id => {
+  document.getElementById(id).addEventListener("input", e => {
+    save(id.replace("cfg-", "cfg_"), e.target.value);
+    updatePreview();
+  });
+});
+
+// ── Questions ──────────────────────────────────────────────────────────────
+function addQuestion(type, data) {
+  const id = "q" + (questionIdCounter++);
+  save("qcounter", String(questionIdCounter));
+  const q = data || {
+    id,
+    type,
+    instructions: "",
+    criteria: type === "choice" ? [{"key":"option1","val":""},{"key":"option2","val":""}]
+             : type === "score" ? ["Level 0","Level 1","Level 2"]
+             : []
+  };
+  if (!q.id) q.id = id;
+  questions.push(q);
+  saveQuestions();
+  renderQuestions();
+}
+
+function removeQuestion(idx) {
+  questions.splice(idx, 1);
+  saveQuestions();
+  renderQuestions();
+}
+
+function saveQuestions() {
+  save("questions", JSON.stringify(questions));
+}
+
+function renderQuestions() {
+  const el = document.getElementById("questions");
+  if (questions.length === 0) {
+    el.innerHTML = '<div style="color:#555;font-size:13px">No questions yet. Add one below.</div>';
+    updatePreview();
+    return;
+  }
+  el.innerHTML = questions.map((q, i) => {
+    const tagClass = q.type === "choice" ? "tag-choice" : q.type === "score" ? "tag-score" : "tag-noul";
+    let criteriaHtml = "";
+    if (q.type === "choice") {
+      const items = Array.isArray(q.criteria) ? q.criteria : [];
+      criteriaHtml = `<div class="field"><label>Options</label>${
+        items.map((c, ci) => `<div class="criteria-row">
+          <input placeholder="key" value="${esc(c.key)}" onchange="updateCrit(${i},${ci},'key',this.value)" style="flex:0.4" />
+          <input placeholder="description" value="${esc(c.val)}" onchange="updateCrit(${i},${ci},'val',this.value)" />
+          <button class="remove-crit" onclick="removeCrit(${i},${ci})">&times;</button>
+        </div>`).join("")
+      }<button class="btn btn-sm" onclick="addCrit(${i})">+ option</button></div>`;
+    } else if (q.type === "score") {
+      const items = Array.isArray(q.criteria) ? q.criteria : [];
+      criteriaHtml = `<div class="field"><label>Levels (ordered low to high)</label>${
+        items.map((c, ci) => `<div class="criteria-row">
+          <input value="${esc(c)}" onchange="updateScoreCrit(${i},${ci},this.value)" />
+          <button class="remove-crit" onclick="removeScoreCrit(${i},${ci})">&times;</button>
+        </div>`).join("")
+      }<button class="btn btn-sm" onclick="addScoreCrit(${i})">+ level</button></div>`;
+    } else if (q.type === "noul") {
+      criteriaHtml = `<div style="font-size:12px;color:#555;margin-top:4px">Returns 0.0 (no) to 1.0 (yes)</div>`;
+    }
+
+    return `<div class="question-card">
+      <button class="remove-btn" onclick="removeQuestion(${i})" title="Remove">&times;</button>
+      <div class="question-header">
+        <div class="field"><label>ID</label><input value="${esc(q.id)}" onchange="updateQ(${i},'id',this.value)" /></div>
+        <div class="field"><label>Type</label>
+          <select onchange="changeType(${i},this.value)">
+            <option value="choice" ${q.type==="choice"?"selected":""}>choice</option>
+            <option value="score" ${q.type==="score"?"selected":""}>score</option>
+            <option value="noul" ${q.type==="noul"?"selected":""}>noul</option>
+          </select>
+        </div>
+        <div style="flex:2" class="field"><label>Instructions</label><input value="${esc(q.instructions)}" onchange="updateQ(${i},'instructions',this.value)" placeholder="What should the model decide?" /></div>
+      </div>
+      <span class="tag ${tagClass}">${q.type}</span>
+      ${criteriaHtml}
+    </div>`;
+  }).join("");
+  updatePreview();
+}
+
+function esc(s) { return String(s||"").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+window.updateQ = (i, k, v) => { questions[i][k] = v; saveQuestions(); updatePreview(); };
+window.changeType = (i, t) => {
+  questions[i].type = t;
+  if (t === "choice" && !Array.isArray(questions[i].criteria)) questions[i].criteria = [{"key":"option1","val":""}];
+  if (t === "score" && !Array.isArray(questions[i].criteria)) questions[i].criteria = ["Level 0","Level 1","Level 2"];
+  if (t === "noul") questions[i].criteria = [];
+  saveQuestions(); renderQuestions();
+};
+
+// Choice criteria
+window.addCrit = (i) => { questions[i].criteria.push({"key":"","val":""}); saveQuestions(); renderQuestions(); };
+window.removeCrit = (i, ci) => { questions[i].criteria.splice(ci, 1); saveQuestions(); renderQuestions(); };
+window.updateCrit = (i, ci, k, v) => { questions[i].criteria[ci][k] = v; saveQuestions(); updatePreview(); };
+
+// Score criteria
+window.addScoreCrit = (i) => { questions[i].criteria.push("New level"); saveQuestions(); renderQuestions(); };
+window.removeScoreCrit = (i, ci) => { questions[i].criteria.splice(ci, 1); saveQuestions(); renderQuestions(); };
+window.updateScoreCrit = (i, ci, v) => { questions[i].criteria[ci] = v; saveQuestions(); updatePreview(); };
+
+// ── Request Preview ────────────────────────────────────────────────────────
+function buildRequest() {
+  const questionsObj = {};
+  questions.forEach(q => {
+    const entry = { type: q.type, instructions: q.instructions };
+    if (q.type === "choice") {
+      entry.criteria = {};
+      (Array.isArray(q.criteria) ? q.criteria : []).forEach(c => {
+        entry.criteria[c.key] = c.val || null;
+      });
+    } else if (q.type === "score") {
+      entry.criteria = q.criteria || [];
+    }
+    questionsObj[q.id] = entry;
+  });
+  return {
+    state: document.getElementById("state").value,
+    model: document.getElementById("cfg-model").value,
+    questions: questionsObj,
+  };
+}
+
+function updatePreview() {
+  document.getElementById("preview").textContent = JSON.stringify(buildRequest(), null, 2);
+}
+
+// ── Send ───────────────────────────────────────────────────────────────────
+async function sendRequest() {
+  const btn = document.getElementById("send-btn");
+  const label = document.getElementById("send-label");
+  const status = document.getElementById("status");
+  const respEl = document.getElementById("response");
+
+  btn.disabled = true;
+  label.innerHTML = '<span class="spinner"></span> Evaluating...';
+  status.className = "status";
+  status.textContent = "Sending...";
+  respEl.className = "response-box";
+  respEl.textContent = "Waiting for LLM response...";
+
+  const reqBody = buildRequest();
+
+  try {
+    // Call our Node proxy (avoids CORS, uses server-side config)
+    const cfgUrl = document.getElementById("cfg-url").value.replace(/\/+$/, "");
+    const cfgKey = document.getElementById("cfg-key").value || "";
+    const res = await fetch("/v1/proxy/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-llm-base-url": cfgUrl,
+        "x-llm-api-key": cfgKey,
+      },
+      body: JSON.stringify({
+        model: reqBody.model,
+        messages: [
+          { role: "system", content: "You are a precise structured evaluation engine. You always return valid JSON with no explanations or markdown." },
+          { role: "user", content: buildFullPrompt(reqBody) },
+        ],
+        temperature: 0,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Empty response from LLM");
+
+    let parsed;
+    try {
+      const cleaned = content.replace(/^```json\s*/i, "").replace(/^```[\s\S]*?```$/m, "").trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+    } catch (e) {
+      throw new Error(`Failed to parse JSON: ${e.message}\nRaw: ${content.slice(0, 500)}`);
+    }
+
+    // Build TypeSafe-compatible response
+    const response = buildTypeSafeResponse(reqBody, parsed, data);
+    respEl.className = "response-box success";
+    respEl.textContent = JSON.stringify(response, null, 2);
+    const tokens = data.usage ? `${data.usage.prompt_tokens || 0} in / ${data.usage.completion_tokens || 0} out` : "unknown";
+    status.className = "status ok";
+    status.textContent = `OK (${tokens})`;
+  } catch (err) {
+    respEl.className = "response-box error";
+    respEl.textContent = err.message;
+    status.className = "status err";
+    status.textContent = "Failed";
+  } finally {
+    btn.disabled = false;
+    label.textContent = "Send Evaluation";
+  }
+}
+
+// ── Prompt Builder (mirrors src/prompt.ts) ─────────────────────────────────
+function serializeInstr(v) {
+  if (typeof v === "string") return v;
+  return JSON.stringify(v, null, 2);
+}
+
+function buildFullPrompt(req) {
+  const stateStr = typeof req.state === "string" ? req.state : JSON.stringify(req.state, null, 2);
+  const qParts = Object.entries(req.questions).map(([id, q]) => {
+    let p = `Question ID: "${id}"\nType: ${q.type}\nInstructions: ${serializeInstr(q.instructions)}`;
+    if (q.type === "choice") {
+      const opts = Object.entries(q.criteria).map(([k, v]) => `  - "${k}": ${v === null ? "(no description)" : v}`).join("\n");
+      p += `\nOptions:\n${opts}\nReturn a probability (0.0 to 1.0) for EACH option. Probabilities must sum to 1.0.`;
+    } else if (q.type === "score") {
+      const lvls = q.criteria.map((l, i) => `  ${i}: ${l}`).join("\n");
+      p += `\nLevels:\n${lvls}\nReturn a probability (0.0 to 1.0) for EACH level. Probabilities must sum to 1.0.`;
+    } else {
+      p += `\nReturn a single number from 0.0 (definitely no) to 1.0 (definitely yes).`;
+    }
+    return p;
+  }).join("\n\n---\n\n");
+
+  const expected = {};
+  for (const [id, q] of Object.entries(req.questions)) {
+    if (q.type === "choice") expected[id] = { probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, "<number>"])) };
+    else if (q.type === "score") expected[id] = { probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), "<number>"])) };
+    else expected[id] = { noul: "<number 0-1>" };
+  }
+
+  return `You are a precise evaluation engine. Your task is to evaluate the given STATE against a set of questions and return ONLY a JSON object with your answers.
+
+RULES:
+1. Return ONLY valid JSON, no markdown, no explanations, no code fences.
+2. Every probability must be between 0.0 and 1.0.
+3. For Choice and Score questions, probabilities for ALL options/levels MUST sum to exactly 1.0.
+4. For Noul questions, return a single number between 0.0 and 1.0.
+5. Be precise and decisive. Avoid splitting probability evenly unless truly uncertain.
+
+STATE:
+${stateStr}
+
+QUESTIONS:
+${qParts}
+
+Return a JSON object with exactly these keys and structure:
+${JSON.stringify(expected, null, 2)}`;
+}
+
+// ── Response Builder (mirrors src/parser.ts) ───────────────────────────────
+function computeConfidence(probs) {
+  const vals = Object.values(probs);
+  if (vals.length === 0) return 0;
+  const entropy = vals.reduce((s, p) => p <= 0 ? s : s - p * Math.log2(p), 0);
+  const maxE = Math.log2(vals.length);
+  if (maxE === 0) return 1;
+  return Math.round((1 - entropy / maxE) * 100) / 100;
+}
+
+function norm(probs) {
+  const total = Object.values(probs).reduce((s, v) => s + v, 0);
+  if (total === 0) return probs;
+  const n = {};
+  for (const [k, v] of Object.entries(probs)) n[k] = Math.round((v / total) * 10000) / 10000;
+  const diff = 1 - Object.values(n).reduce((s, v) => s + v, 0);
+  const keys = Object.keys(n);
+  if (keys.length > 0 && Math.abs(diff) > 0.0001) n[keys[0]] = Math.round((n[keys[0]] + diff) * 10000) / 10000;
+  return n;
+}
+
+function buildTypeSafeResponse(req, raw, llmData) {
+  const answers = {};
+  for (const [id, q] of Object.entries(req.questions)) {
+    const entry = raw[id] || {};
+    if (q.type === "noul") {
+      answers[id] = { type: "noul", noul: Math.round(Math.max(0, Math.min(1, entry.noul ?? 0.5)) * 100) / 100 };
+    } else if (q.type === "choice") {
+      const probs = {};
+      Object.keys(q.criteria).forEach(k => probs[k] = typeof entry.probabilities?.[k] === "number" ? entry.probabilities[k] : 0);
+      const n = norm(probs);
+      const choice = Object.entries(n).reduce((a, b) => b[1] > a[1] ? b : a)[0];
+      answers[id] = { type: "choice", choice, probabilities: n, confidence: computeConfidence(n) };
+    } else if (q.type === "score") {
+      const probs = {};
+      q.criteria.forEach((_, i) => probs[String(i)] = typeof entry.probabilities?.[String(i)] === "number" ? entry.probabilities[String(i)] : 0);
+      const n = norm(probs);
+      let score = 0;
+      for (let i = 0; i < q.criteria.length; i++) score += i * (n[String(i)] || 0);
+      const legend = {};
+      q.criteria.forEach((l, i) => legend[String(i)] = l);
+      answers[id] = { type: "score", score: Math.round(score * 100) / 100, legend, probabilities: n, confidence: computeConfidence(n) };
+    }
+  }
+  return {
+    model: `xev-${req.model}`,
+    answers,
+    usage: {
+      input_tokens: llmData.usage?.prompt_tokens ?? 0,
+      output_tokens: llmData.usage?.completion_tokens ?? 0,
+    },
+  };
+}
+
+// ── Presets ────────────────────────────────────────────────────────────────
+const PRESETS = {
+  support: {
+    state: "Our API integration started returning 500 errors on every request about 20 minutes ago, and we can't process any customer orders until this is fixed.",
+    questions: [
+      { id: "department", type: "choice", instructions: "Which team should handle this?", criteria: [{"key":"billing","val":"Payment or subscription issues"},{"key":"technical","val":"Bugs or integration problems"},{"key":"sales","val":"Pricing or account questions"}] },
+      { id: "frustration", type: "score", instructions: "How frustrated the customer appears", criteria: ["Calm, just stating facts","Frustrated but civil","Very angry, strong language"] },
+      { id: "is_urgent", type: "noul", instructions: "The message conveys urgency or time-sensitivity", criteria: [] },
+    ],
+  },
+  code: {
+    state: "The function `calculateTotal` in `utils/math.ts` uses `var` instead of `const` and has a potential division by zero on line 42. Also the variable name `x` is not descriptive.",
+    questions: [
+      { id: "severity", type: "score", instructions: "How severe is this code review finding?", criteria: ["Cosmetic / style nit","Minor improvement, no risk","Potential bug, low risk","Definite bug, needs fix"] },
+      { id: "action", type: "choice", instructions: "What action should be taken?", criteria: [{"key":"merge","val":"Merge as-is"},{"key":"suggest","val":"Leave suggestion, merge anyway"},{"key":"block","val":"Block until resolved"}] },
+      { id: "is_security", type: "noul", instructions: "Does this finding have security implications?", criteria: [] },
+    ],
+  },
+  email: {
+    state: "Subject: Urgent - Invoice #4821 overdue\n\nHi, I noticed our payment for invoice #4821 was declined. This is the second time this month. Please update your card details or we'll need to suspend the account. Let me know if you need help.",
+    questions: [
+      { id: "category", type: "choice", instructions: "What type of email is this?", criteria: [{"key":"billing","val":"Payment or invoice issue"},{"key":"support","val":"Technical support request"},{"key":"sales","val":"Sales or upsell"},{"key":"spam","val":"Spam or phishing"}] },
+      { id: "priority", type: "score", instructions: "How urgent is this email?", criteria: ["Low, can wait days","Medium, respond within 24h","High, respond ASAP","Critical, immediate action"] },
+      { id: "is_threat", type: "noul", instructions: "Does this email contain a threat or ultimatum?", criteria: [] },
+    ],
+  },
+};
+
+window.loadPreset = (name) => {
+  const p = PRESETS[name];
+  if (!p) return;
+  document.getElementById("state").value = p.state;
+  save("state", p.state);
+  questions = JSON.parse(JSON.stringify(p.questions));
+  saveQuestions();
+  renderQuestions();
+};
+
+window.clearAll = () => {
+  questions = [];
+  saveQuestions();
+  document.getElementById("state").value = "";
+  save("state", "");
+  renderQuestions();
+  document.getElementById("response").textContent = "No response yet";
+  document.getElementById("response").className = "response-box";
+  document.getElementById("status").textContent = "";
+};
+
+// ── Init ───────────────────────────────────────────────────────────────────
+renderQuestions();
+updatePreview();
+</script>
+</body>
+</html>
