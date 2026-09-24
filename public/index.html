@@ -99,7 +99,7 @@
       </div>
       <div class="field">
         <label>Model</label>
-        <input id="cfg-model" placeholder="google/gemma-4-26b-a4b-qat" />
+        <input id="cfg-model" placeholder="qwen/qwen3.5-9b" />
       </div>
       <div class="field">
         <label>API Key <span style="color:#555">(optional for local)</span></label>
@@ -166,7 +166,7 @@ let questions = JSON.parse(load("questions", "[]"));
 
 // Init config fields
 document.getElementById("cfg-url").value = load("cfg_url", "http://127.0.0.1:1234/v1");
-document.getElementById("cfg-model").value = load("cfg_model", "google/gemma-4-26b-a4b-qat");
+document.getElementById("cfg-model").value = load("cfg_model", "qwen/qwen3.5-9b");
 document.getElementById("cfg-key").value = load("cfg_key", "");
 document.getElementById("state").value = load("state", "");
 

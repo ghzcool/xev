@@ -29,7 +29,7 @@ Set environment variables in `.env`:
 |----------|---------|-------------|
 | `LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API base URL |
 | `LLM_API_KEY` | (empty) | API key for the LLM provider |
-| `LLM_MODEL` | `google/gemma-4-26b-a4b-qat` | Model to use for evaluations |
+| `LLM_MODEL` | `qwen/qwen3.5-9b` | Model to use for evaluations |
 | `PORT` | `3000` | Server port |
 
 Works with any OpenAI-compatible API: LM Studio, Ollama, OpenAI, vLLM, etc.
