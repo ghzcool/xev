@@ -40,15 +40,9 @@ app.get("/v1/models", (_req, res) => {
 });
 
 // Main evaluation endpoint - mirrors TypeSafe API
+// Accepts x-llm-base-url, x-llm-api-key, x-llm-model headers to override server config
 app.post("/v1/systemone", async (req, res) => {
-  const config = getConfig();
-
-  if (!config.apiKey) {
-    res.status(500).json({
-      error: "LLM_API_KEY environment variable is not set",
-    });
-    return;
-  }
+  const serverConfig = getConfig();
 
   const validation = validateRequest(req.body);
   if (!validation.success) {
@@ -62,14 +56,17 @@ app.post("/v1/systemone", async (req, res) => {
   const { state, model, questions } = validation.data;
 
   try {
-    // Use the model from request if it looks like a real model name,
-    // otherwise fall back to env config
     const effectiveModel =
-      model && model !== "jev-latest" ? model : config.model;
+      (req.headers["x-llm-model"] as string) ||
+      (model && model !== "jev-latest" ? model : serverConfig.model);
 
     const prompt = buildPrompt(state, questions);
 
-    const llmConfig = { ...config, model: effectiveModel };
+    const llmConfig = {
+      baseURL: (req.headers["x-llm-base-url"] as string) || serverConfig.baseURL,
+      apiKey: (req.headers["x-llm-api-key"] as string) || serverConfig.apiKey || "no-key",
+      model: effectiveModel,
+    };
     const result = await callLLM(prompt, llmConfig);
 
     const response = parseResponse(
@@ -124,7 +121,7 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 app.listen(PORT, () => {
   console.log(`Xev server running on port ${PORT}`);
   console.log(
-    `Using LLM: ${process.env.LLM_MODEL || "gpt-4o"} at ${process.env.LLM_BASE_URL || "https://api.openai.com/v1"}`
+    `Using LLM: ${process.env.LLM_MODEL || "default"} at ${process.env.LLM_BASE_URL || "localhost"}`
   );
   console.log(`POST /v1/systemone - evaluate state against questions`);
 });
