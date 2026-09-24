@@ -11,6 +11,15 @@ import type {
   SystemOneResponse,
 } from "./types";
 
+function toNum(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    if (!isNaN(n)) return n;
+  }
+  return 0;
+}
+
 function computeConfidence(probabilities: Record<string, number>): number {
   const values = Object.values(probabilities);
   if (values.length === 0) return 0;
@@ -53,7 +62,7 @@ function parseNoul(
   if (!entry) {
     return { type: "noul", noul: 0.5 };
   }
-  const noul = typeof entry.noul === "number" ? entry.noul : 0.5;
+  const noul = toNum(entry.noul);
   return {
     type: "noul",
     noul: Math.round(Math.max(0, Math.min(1, noul)) * 100) / 100,
@@ -83,7 +92,7 @@ function parseChoice(
   // Ensure all options have a probability
   const probs: Record<string, number> = {};
   for (const key of optionKeys) {
-    probs[key] = typeof entry.probabilities[key] === "number" ? entry.probabilities[key] : 0;
+    probs[key] = toNum(entry.probabilities[key]);
   }
 
   const normalized = normalizeProbabilities(probs);
@@ -123,10 +132,7 @@ function parseScore(
 
   const probs: Record<string, number> = {};
   for (let i = 0; i < levelCount; i++) {
-    probs[String(i)] =
-      typeof entry.probabilities[String(i)] === "number"
-        ? entry.probabilities[String(i)]
-        : 0;
+    probs[String(i)] = toNum(entry.probabilities[String(i)]);
   }
 
   const normalized = normalizeProbabilities(probs);

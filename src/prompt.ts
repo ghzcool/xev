@@ -70,30 +70,31 @@ export function buildPrompt(
     .map(([id, q]) => questionToPrompt(id, q))
     .join("\n\n---\n\n");
 
-  // Build expected JSON keys for the LLM output
-  const expectedKeys: Record<string, string> = {};
+  // Build an exact JSON template with placeholder zeros
+  const template: Record<string, unknown> = {};
   for (const [id, q] of Object.entries(questions)) {
     if (q.type === "choice") {
-      expectedKeys[id] = `{"probabilities": {${Object.keys(q.criteria)
-        .map((k) => `"${k}": <number>`)
-        .join(", ")}}}`;
+      const probs: Record<string, number> = {};
+      for (const k of Object.keys(q.criteria)) probs[k] = 0;
+      template[id] = { probabilities: probs };
     } else if (q.type === "score") {
-      expectedKeys[id] = `{"probabilities": {${q.criteria
-        .map((_, i) => `"${i}": <number>`)
-        .join(", ")}}}`;
+      const probs: Record<string, number> = {};
+      q.criteria.forEach((_, i) => (probs[String(i)] = 0));
+      template[id] = { probabilities: probs };
     } else {
-      expectedKeys[id] = `{"noul": <number 0-1>}`;
+      template[id] = { noul: 0 };
     }
   }
 
-  return `You are a precise evaluation engine. Your task is to evaluate the given STATE against a set of questions and return ONLY a JSON object with your answers.
+  return `You are a precise evaluation engine. Evaluate the STATE against each QUESTION.
 
 RULES:
-1. Return ONLY valid JSON, no markdown, no explanations, no code fences.
+1. Return ONLY valid JSON. No markdown, no code fences, no explanations.
 2. Every probability must be between 0.0 and 1.0.
-3. For Choice and Score questions, probabilities for ALL options/levels MUST sum to exactly 1.0.
+3. For Choice and Score questions, probabilities MUST sum to exactly 1.0.
 4. For Noul questions, return a single number between 0.0 and 1.0.
-5. Be precise and decisive. Avoid splitting probability evenly unless truly uncertain.
+5. Be precise. Do not split probability evenly unless truly uncertain.
+6. Numbers must be bare (no quotes). Example: "0.5" is wrong, 0.5 is correct.
 
 STATE:
 ${stateStr}
@@ -101,6 +102,6 @@ ${stateStr}
 QUESTIONS:
 ${questionPrompts}
 
-Return a JSON object with exactly these keys and structure:
-${JSON.stringify(expectedKeys, null, 2)}`;
+Return ONLY this JSON object, replacing the 0 values with your answers. Do not add or remove any keys:
+${JSON.stringify(template, null, 2)}`;
 }

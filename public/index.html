@@ -399,21 +399,31 @@ function buildFullPrompt(req) {
     return p;
   }).join("\n\n---\n\n");
 
-  const expected = {};
+  // Build exact JSON template with placeholder zeros
+  const template = {};
   for (const [id, q] of Object.entries(req.questions)) {
-    if (q.type === "choice") expected[id] = { probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, "<number>"])) };
-    else if (q.type === "score") expected[id] = { probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), "<number>"])) };
-    else expected[id] = { noul: "<number 0-1>" };
+    if (q.type === "choice") {
+      const probs = {};
+      Object.keys(q.criteria).forEach(k => probs[k] = 0);
+      template[id] = { probabilities: probs };
+    } else if (q.type === "score") {
+      const probs = {};
+      q.criteria.forEach((_, i) => probs[String(i)] = 0);
+      template[id] = { probabilities: probs };
+    } else {
+      template[id] = { noul: 0 };
+    }
   }
 
-  return `You are a precise evaluation engine. Your task is to evaluate the given STATE against a set of questions and return ONLY a JSON object with your answers.
+  return `You are a precise evaluation engine. Evaluate the STATE against each QUESTION.
 
 RULES:
-1. Return ONLY valid JSON, no markdown, no explanations, no code fences.
+1. Return ONLY valid JSON. No markdown, no code fences, no explanations.
 2. Every probability must be between 0.0 and 1.0.
-3. For Choice and Score questions, probabilities for ALL options/levels MUST sum to exactly 1.0.
+3. For Choice and Score questions, probabilities MUST sum to exactly 1.0.
 4. For Noul questions, return a single number between 0.0 and 1.0.
-5. Be precise and decisive. Avoid splitting probability evenly unless truly uncertain.
+5. Be precise. Do not split probability evenly unless truly uncertain.
+6. Numbers must be bare (no quotes). Example: "0.5" is wrong, 0.5 is correct.
 
 STATE:
 ${stateStr}
@@ -421,11 +431,12 @@ ${stateStr}
 QUESTIONS:
 ${qParts}
 
-Return a JSON object with exactly these keys and structure:
-${JSON.stringify(expected, null, 2)}`;
+Return ONLY this JSON object, replacing the 0 values with your answers. Do not add or remove any keys:
+${JSON.stringify(template, null, 2)}`;
 }
 
 // ── Response Builder (mirrors src/parser.ts) ───────────────────────────────
+function toNum(v) { const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN; return isNaN(n) ? 0 : n; }
 function computeConfidence(probs) {
   const vals = Object.values(probs);
   if (vals.length === 0) return 0;
@@ -451,16 +462,16 @@ function buildTypeSafeResponse(req, raw, llmData) {
   for (const [id, q] of Object.entries(req.questions)) {
     const entry = raw[id] || {};
     if (q.type === "noul") {
-      answers[id] = { type: "noul", noul: Math.round(Math.max(0, Math.min(1, entry.noul ?? 0.5)) * 100) / 100 };
+      answers[id] = { type: "noul", noul: Math.round(Math.max(0, Math.min(1, toNum(entry.noul) || 0.5)) * 100) / 100 };
     } else if (q.type === "choice") {
       const probs = {};
-      Object.keys(q.criteria).forEach(k => probs[k] = typeof entry.probabilities?.[k] === "number" ? entry.probabilities[k] : 0);
+      Object.keys(q.criteria).forEach(k => probs[k] = toNum(entry.probabilities?.[k]));
       const n = norm(probs);
       const choice = Object.entries(n).reduce((a, b) => b[1] > a[1] ? b : a)[0];
       answers[id] = { type: "choice", choice, probabilities: n, confidence: computeConfidence(n) };
     } else if (q.type === "score") {
       const probs = {};
-      q.criteria.forEach((_, i) => probs[String(i)] = typeof entry.probabilities?.[String(i)] === "number" ? entry.probabilities[String(i)] : 0);
+      q.criteria.forEach((_, i) => probs[String(i)] = toNum(entry.probabilities?.[String(i)]));
       const n = norm(probs);
       let score = 0;
       for (let i = 0; i < q.criteria.length; i++) score += i * (n[String(i)] || 0);
