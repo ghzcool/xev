@@ -25,56 +25,40 @@ Each decision entry:
 **Date:** 2026-09-24
 **Context:** TypeSafe evaluates all questions in parallel in one request. We could either send one LLM call per question or batch them.
 **Decision:** Send all questions in a single prompt to the LLM.
-**Rationale:** Reduces latency (one network round-trip), matches TypeSafe's parallel evaluation model, and keeps token overhead low. The prompt builder already handles all question types in one string.
-**Consequence:** Adding new questions to a request has near-zero marginal cost. The prompt may grow long with many questions, but this is acceptable for typical use.
+**Rationale:** Reduces latency (one network round-trip), matches TypeSafe's parallel evaluation model, and keeps token overhead low.
+**Consequence:** Adding new questions to a request has near-zero marginal cost.
 
-### JSON Output via response_format
-
-**Date:** 2026-09-24
-**Context:** LLMs return free-form text. We need structured JSON to parse probabilities.
-**Decision:** Use `response_format: { type: "json_object" }` when calling the LLM, with regex JSON extraction as a fallback.
-**Rationale:** Many OpenAI-compatible providers support structured output. The fallback handles providers that don't.
-**Consequence:** If a provider doesn't support `response_format`, it is ignored by the SDK and the fallback kicks in. New LLM integrations should test both paths.
-
-### Temperature 0
+### No response_format
 
 **Date:** 2026-09-24
-**Context:** We need deterministic, reproducible evaluations.
-**Decision:** Always use `temperature: 0` for LLM calls.
-**Rationale:** Structured evaluation requires consistency. Temperature > 0 would produce different probabilities on each run.
-**Consequence:** If a future use case needs creative/variety responses, it should use a separate endpoint or configuration flag.
+**Context:** LLMs return free-form text. We need structured JSON. `response_format: { type: "json_object" }` is supported by OpenAI but not by most local servers (LM Studio, Ollama).
+**Decision:** Do not use `response_format`. Instead, instruct the LLM to return raw JSON in the prompt.
+**Rationale:** Maximizes compatibility with local LLM servers. The prompt template approach works everywhere.
+**Consequence:** The parser must extract JSON from the response with regex as a fallback. Some LLMs may return invalid JSON; the parser handles this gracefully.
 
-### Confidence via Entropy
-
-**Date:** 2026-09-24
-**Context:** TypeSafe returns a `confidence` score. We need to compute it from the LLM's probability distribution.
-**Decision:** Compute confidence as `1 - normalized_entropy` of the probability distribution.
-**Rationale:** Entropy directly measures how spread out the distribution is. A single-peak distribution has low entropy (high confidence). An even spread has high entropy (low confidence). This matches TypeSafe's behavior.
-**Consequence:** Confidence is always between 0 and 1. Values near 1 mean the LLM strongly favored one option. Values near 0 mean it was uncertain. Future question types must produce probability distributions to be compatible.
-
-### Express Over Fastify
+### JSON Template Prompts
 
 **Date:** 2026-09-24
-**Context:** Choosing an HTTP framework for the server.
-**Decision:** Use Express.
-**Rationale:** Widely used, large ecosystem, simple mental model. This is a thin wrapper, not a high-performance proxy, so Express's overhead is negligible.
-**Consequence:** All middleware and routing follows Express conventions. If performance becomes critical, consider switching to Fastify or Hono.
+**Context:** Describing the expected JSON structure with `<number>` placeholders led to malformed output (quoted strings, extra keys, wrong structure).
+**Decision:** Include an exact JSON template with `0` placeholders in the prompt. The LLM replaces zeros with its answers.
+**Rationale:** Gives the LLM a concrete format to follow, reducing structural errors. Explicitly instructs "Do not add or remove any keys."
+**Consequence:** The prompt includes the full template. Future question types must add their template shape in `buildPrompt`.
 
-### Zod for Validation
-
-**Date:** 2026-09-24
-**Context:** Need to validate incoming requests against the TypeSafe API contract.
-**Decision:** Use Zod schemas for both TypeScript types and runtime validation.
-**Rationale:** Single source of truth. Define the schema once, derive TypeScript types from it. No drift between types and validation.
-**Consequence:** All new request/response types should be defined as Zod schemas in `types.ts`. Do not create separate TypeScript interfaces that duplicate schema logic.
-
-### No Barrel Files
+### String Coercion in Parser
 
 **Date:** 2026-09-24
-**Context:** Deciding module organization.
-**Decision:** No `index.ts` barrel files. Each module imports directly from the file it needs.
-**Rationale:** Barrel files add indirection and make it harder to trace where things come from. With a small codebase, direct imports are clearer.
-**Consequence:** Import paths like `import { buildPrompt } from "./prompt"` are standard. Do not create `src/index.ts` that re-exports everything.
+**Context:** Some LLMs return probability values as strings (`"0.5"`) instead of numbers (`0.5`), causing JSON parsing to fail or produce wrong types.
+**Decision:** The parser uses a `toNum` helper that coerces string values to numbers via `parseFloat`.
+**Rationale:** Simple defensive measure. Handles the common case where LLMs quote numeric values.
+**Consequence:** All probability and noul values pass through `toNum`. The `toNum` function returns 0 for non-numeric strings.
+
+### Proxy Endpoint for Demo Page
+
+**Date:** 2026-09-24
+**Context:** The demo page needs to call the LLM server. Calling directly from the browser sends CORS preflight `OPTIONS` requests that local LLM servers (LM Studio) don't handle.
+**Decision:** Add a proxy endpoint (`/v1/proxy/chat/completions`) in the Node server. The demo page calls this endpoint instead of the LLM directly.
+**Rationale:** Eliminates CORS issues. The proxy accepts `x-llm-base-url` and `x-llm-api-key` headers so the demo page can override server config.
+**Consequence:** The demo page depends on the Node server being running. Direct API calls still go through `/v1/systemone`.
 
 ### Model Override via Request
 
@@ -83,3 +67,43 @@ Each decision entry:
 **Decision:** If the model field is `jev-latest` or similar TypeSafe alias, use the default `LLM_MODEL` from env. Otherwise, use the model name from the request directly.
 **Rationale:** Allows clients to use TypeSafe-compatible model names while also letting them specify a different model per request.
 **Consequence:** The response `model` field is prefixed with `xev-` to distinguish it from real TypeSafe responses.
+
+### Express Over Fastify
+
+**Date:** 2026-09-24
+**Context:** Choosing an HTTP framework for the server.
+**Decision:** Use Express.
+**Rationale:** Widely used, large ecosystem, simple mental model. This is a thin wrapper, not a high-performance proxy.
+**Consequence:** All middleware and routing follows Express conventions.
+
+### Zod for Validation
+
+**Date:** 2026-09-24
+**Context:** Need to validate incoming requests against the TypeSafe API contract.
+**Decision:** Use Zod schemas for both TypeScript types and runtime validation.
+**Rationale:** Single source of truth. Define the schema once, derive TypeScript types from it.
+**Consequence:** All new request/response types should be defined as Zod schemas in `types.ts`.
+
+### No Barrel Files
+
+**Date:** 2026-09-24
+**Context:** Deciding module organization.
+**Decision:** No barrel files. Each module imports directly from the file it needs.
+**Rationale:** With a small codebase, direct imports are clearer.
+**Consequence:** Import paths like `import { buildPrompt } from "./prompt"` are standard.
+
+### Temperature 0
+
+**Date:** 2026-09-24
+**Context:** We need deterministic, reproducible evaluations.
+**Decision:** Always use `temperature: 0` for LLM calls.
+**Rationale:** Structured evaluation requires consistency.
+**Consequence:** If a future use case needs creative/variety responses, it should use a separate endpoint or configuration flag.
+
+### Confidence via Entropy
+
+**Date:** 2026-09-24
+**Context:** TypeSafe returns a `confidence` score. We need to compute it from the LLM's probability distribution.
+**Decision:** Compute confidence as `1 - normalized_entropy` of the probability distribution.
+**Rationale:** Entropy directly measures how spread out the distribution is. Single peak = high confidence. Even spread = low confidence.
+**Consequence:** Confidence is always between 0 and 1. Future question types must produce probability distributions to be compatible.

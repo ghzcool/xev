@@ -4,7 +4,7 @@ Jev-like wrapper for any LLM. Drop-in replacement for TypeSafe's Jev API that us
 
 ## Overview
 
-Xev accepts the same request format as TypeSafe's [System One API](https://docs.typesafe.ai/api) and returns the same response structure, but uses any LLM (GPT-4o, Claude, Llama, etc.) to evaluate your questions.
+Xev accepts the same request format as TypeSafe's [System One API](https://docs.typesafe.ai/api) and returns the same response structure, but uses any LLM (GPT-4o, Claude, Llama, LM Studio, Ollama, etc.) to evaluate your questions.
 
 **Supported question types:**
 - **Choice** - Pick one option from a defined set (returns choice, probabilities, confidence)
@@ -16,8 +16,9 @@ Xev accepts the same request format as TypeSafe's [System One API](https://docs.
 ```bash
 npm install
 cp .env.example .env
-# Edit .env with your LLM API key
+# Edit .env with your LLM settings
 npm run dev
+# Open http://localhost:3000
 ```
 
 ## Configuration
@@ -26,12 +27,23 @@ Set environment variables in `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
-| `LLM_API_KEY` | - | API key for the LLM provider |
-| `LLM_MODEL` | `gpt-4o` | Model to use for evaluations |
+| `LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API base URL |
+| `LLM_API_KEY` | (empty) | API key for the LLM provider |
+| `LLM_MODEL` | `google/gemma-4-26b-a4b-qat` | Model to use for evaluations |
 | `PORT` | `3000` | Server port |
 
-Works with any OpenAI-compatible API: OpenAI, Anthropic (via proxy), Ollama, vLLM, etc.
+Works with any OpenAI-compatible API: LM Studio, Ollama, OpenAI, vLLM, etc.
+
+## Demo Page
+
+Open `http://localhost:3000` in your browser for a testing UI with:
+- Configurable LLM connection (base URL, model, API key)
+- State textarea with presets (Support Ticket, Code Review, Email Triage)
+- Question builder for Choice, Score, and Noul types
+- Live request preview
+- Response viewer with probabilities and confidence
+
+All values are saved in localStorage.
 
 ## API
 
@@ -98,6 +110,12 @@ Send state and typed questions, get structured answers.
 
 Returns `{ "status": "ok", "service": "xev" }`.
 
+### `POST /v1/proxy/chat/completions`
+
+Proxies chat completion requests to the configured LLM. Used by the demo page to avoid CORS issues. Accepts optional headers:
+- `x-llm-base-url` - override `LLM_BASE_URL`
+- `x-llm-api-key` - override `LLM_API_KEY`
+
 ## Usage with curl
 
 ```bash
@@ -123,9 +141,9 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## How It Works
 
 1. Receives a TypeSafe-compatible request with state + questions
-2. Builds a structured prompt asking the LLM to evaluate each question
-3. LLM returns probabilities/values for each question
-4. Parser normalizes probabilities, computes confidence scores
+2. Builds a prompt with an exact JSON template (zero placeholders) for the LLM to fill
+3. LLM returns probabilities/values in the template format
+4. Parser coerces strings to numbers, normalizes probabilities, computes confidence
 5. Returns a TypeSafe-compatible response
 
 ## License
