@@ -27,7 +27,7 @@ Before editing any code, read these files in order:
 4. Use `temperature: 0` for all LLM calls.
 5. All probabilities must be normalized to sum to 1.0.
 6. The parser must coerce string values to numbers (LLMs may return `"0.5"` instead of `0.5`).
-7. The prompt must include an exact JSON template with zero placeholders for the LLM to fill in.
+7. The prompt must include a response template with indexed `${0}`, `${1}` ... placeholders, and the LLM must answer with `;`-separated `index:value` pairs (e.g. `0:0.1;1:0.234;2:0;3:1`).
 8. Do not use `response_format` - not supported by most local LLM servers.
 
 ### After Making Changes
@@ -48,7 +48,7 @@ Before editing any code, read these files in order:
 - **File naming:** camelCase for source files
 - **Temperature:** Always 0 for LLM calls
 - **Confidence:** Computed via entropy of probability distribution
-- **Prompts:** Use JSON templates with zero placeholders, not abstract schemas
+- **Prompts:** Use templates with indexed `${i}` placeholders answered as `;`-separated `index:value` pairs, not abstract schemas
 - **Proxy:** Demo page uses `/v1/proxy/chat/completions` to avoid CORS
 
 ## Common Commands

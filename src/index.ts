@@ -71,7 +71,7 @@ app.post("/v1/systemone", async (req, res) => {
 
     const response = parseResponse(
       questions,
-      result.output,
+      result.content,
       effectiveModel,
       result.usage
     );

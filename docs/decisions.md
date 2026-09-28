@@ -34,7 +34,7 @@ Each decision entry:
 **Context:** LLMs return free-form text. We need structured JSON. `response_format: { type: "json_object" }` is supported by OpenAI but not by most local servers (LM Studio, Ollama).
 **Decision:** Do not use `response_format`. Instead, instruct the LLM to return raw JSON in the prompt.
 **Rationale:** Maximizes compatibility with local LLM servers. The prompt template approach works everywhere.
-**Consequence:** The parser must extract JSON from the response with regex as a fallback. Some LLMs may return invalid JSON; the parser handles this gracefully.
+**Consequence:** The parser must extract answers from raw text with regex: `index:value` pairs as the primary format, JSON as a fallback. Some LLMs may return neither; the parser reports an error with a snippet of the response.
 
 ### JSON Template Prompts
 
@@ -43,6 +43,15 @@ Each decision entry:
 **Decision:** Include an exact JSON template with `0` placeholders in the prompt. The LLM replaces zeros with its answers.
 **Rationale:** Gives the LLM a concrete format to follow, reducing structural errors. Explicitly instructs "Do not add or remove any keys."
 **Consequence:** The prompt includes the full template. Future question types must add their template shape in `buildPrompt`.
+**Superseded:** 2026-09-28 by "Indexed Placeholder Answers" - the template still exists, but its values are `${index}` placeholders and the LLM answers with an `index:value` list instead of filling in JSON.
+
+### Indexed Placeholder Answers
+
+**Date:** 2026-09-28
+**Context:** Asking the LLM to fill in a full JSON object made it regenerate the whole structure each time, which is token-heavy and still fails on some models (quoted keys, dropped keys, stray text).
+**Decision:** The response template carries indexed placeholders (`${0}`, `${1}`, ...) instead of zeros, and the LLM answers with only a `;`-separated list of `index:value` pairs (e.g. `0:0.1;1:0.234;2:0;3:1`). Index order is defined once by `buildPlaceholderMap` in `prompt.ts` and reused by the parser to map values back to question fields.
+**Rationale:** The answer format is unambiguous, has no structure to get wrong, and is much shorter. Keeping one function for index assignment prevents prompt/parser drift.
+**Consequence:** `prompt.ts` owns `buildPlaceholderMap`; `parser.ts` imports it. `llm.ts` returns raw response text instead of parsed JSON. If the response contains a JSON object (models sometimes echo the template), the parser falls back to parsing it as before. Future question types must add their placeholders in `buildPlaceholderMap` and their shape in `buildTemplate`.
 
 ### String Coercion in Parser
 
@@ -100,10 +109,15 @@ Each decision entry:
 **Rationale:** Structured evaluation requires consistency.
 **Consequence:** If a future use case needs creative/variety responses, it should use a separate endpoint or configuration flag.
 
-### Confidence via Entropy
+### Confidence via Peak Rescaling (matches Jev)
 
 **Date:** 2026-09-24
-**Context:** TypeSafe returns a `confidence` score. We need to compute it from the LLM's probability distribution.
-**Decision:** Compute confidence as `1 - normalized_entropy` of the probability distribution.
-**Rationale:** Entropy directly measures how spread out the distribution is. Single peak = high confidence. Even spread = low confidence.
-**Consequence:** Confidence is always between 0 and 1. Future question types must produce probability distributions to be compatible.
+**Context:** TypeSafe returns a `confidence` score. We need to compute it from the LLM's probability distribution so results match Jev.
+
+**Decision:** Compute confidence as `clamp01((n * max_probability - 1) / (n - 1))`, where `n` is the number of options/levels.
+
+**Rationale:** This is Jev's documented formula (the Confidence docs state it for three options as `(3 * largest - 1) / 2`). It rescales the top probability so that a uniform distribution gives 0 and a single peak gives 1, independent of how many options exist. Verified against published Jev responses.
+
+**Consequence:** Confidence is always between 0 and 1. It is a rescaled max probability, not an entropy measure, so it is sensitive to the winner's margin rather than the whole spread. Future question types must produce probability distributions to be compatible.
+
+**Supersedes:** the earlier entropy-based decision (`1 - normalized_entropy`), which produced systematically lower values than Jev (e.g. 0.49 vs 0.73 for `[0.1, 0.8, 0.05, 0.05]`).

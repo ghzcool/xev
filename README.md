@@ -141,9 +141,9 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## How It Works
 
 1. Receives a TypeSafe-compatible request with state + questions
-2. Builds a prompt with an exact JSON template (zero placeholders) for the LLM to fill
-3. LLM returns probabilities/values in the template format
-4. Parser coerces strings to numbers, normalizes probabilities, computes confidence
+2. Builds a prompt with a response template whose values are indexed placeholders (`${0}`, `${1}`, ...)
+3. LLM answers with a `;`-separated `index:value` list, e.g. `0:0.1;1:0.234;2:0;3:1` (filled-in JSON is accepted as a fallback)
+4. Parser maps each index back to its question, coerces strings to numbers, normalizes probabilities, computes confidence
 5. Returns a TypeSafe-compatible response
 
 ## License

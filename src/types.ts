@@ -89,10 +89,19 @@ export interface SystemOneResponse {
   };
 }
 
-// ── LLM raw output (what we ask the LLM to return) ─────────────────────────
+// ── LLM output ──────────────────────────────────────────────────────────────
 export interface LLMQuestionResult {
   probabilities?: Record<string, number>;
   noul?: number;
 }
 
+// Normalized per-question shape, produced from placeholder values or LLM JSON
 export type LLMRawOutput = Record<string, LLMQuestionResult>;
+
+// Values parsed from the LLM answer list: `0:0.1;1:0.234;2:0;3:1`
+export type LLMValues = Record<number, number>;
+
+// Maps a `${index}` placeholder in the response template to its target field
+export type Placeholder =
+  | { questionId: string; field: "noul" }
+  | { questionId: string; field: "probabilities"; key: string };

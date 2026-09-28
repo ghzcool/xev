@@ -7,9 +7,11 @@ import type {
   NoulAnswer,
   ChoiceAnswer,
   ScoreAnswer,
+  LLMValues,
   LLMRawOutput,
   SystemOneResponse,
 } from "./types";
+import { buildPlaceholderMap } from "./prompt";
 
 function toNum(v: unknown): number {
   if (typeof v === "number") return v;
@@ -22,17 +24,13 @@ function toNum(v: unknown): number {
 
 function computeConfidence(probabilities: Record<string, number>): number {
   const values = Object.values(probabilities);
-  if (values.length === 0) return 0;
-  const max = Math.max(...values);
-  // Confidence: 1.0 when all probability on one option, lower when spread out
-  // Uses entropy-based approach: confidence = 1 - normalized_entropy
-  const entropy = values.reduce((sum, p) => {
-    if (p <= 0) return sum;
-    return sum - p * Math.log2(p);
-  }, 0);
-  const maxEntropy = Math.log2(values.length);
-  if (maxEntropy === 0) return 1;
-  return Math.round((1 - entropy / maxEntropy) * 100) / 100;
+  const count = values.length;
+  if (count === 0) return 0;
+  if (count === 1) return 1;
+  // Jev/TypeSafe: confidence = clamp01((n * max_probability - 1) / (n - 1))
+  const peak = Math.max(...values);
+  const confidence = (count * peak - 1) / (count - 1);
+  return Math.round(Math.max(0, Math.min(1, confidence)) * 100) / 100;
 }
 
 function normalizeProbabilities(
@@ -162,12 +160,67 @@ function buildLegend(q: ScoreQuestion): Record<string, string> {
   return legend;
 }
 
+// Parses the answer list: `0:0.1;1:0.234;2:0;3:1`
+function parseValuePairs(content: string): LLMValues {
+  const values: LLMValues = {};
+  for (const match of content.matchAll(/(\d+)\s*:\s*(-?\d+(?:\.\d+)?)/g)) {
+    values[parseInt(match[1], 10)] = parseFloat(match[2]);
+  }
+  return values;
+}
+
+// Fallback for LLMs that answer with the JSON template filled in
+function parseJson(content: string): LLMRawOutput {
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(`No JSON found in LLM response: ${content.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(jsonMatch[0]) as LLMRawOutput;
+  } catch {
+    throw new Error(`Invalid JSON in LLM response: ${jsonMatch[0].slice(0, 200)}`);
+  }
+}
+
+// Maps placeholder values back onto question fields by placeholder index
+function rawFromValues(
+  values: LLMValues,
+  questions: Record<string, Question>
+): LLMRawOutput {
+  const raw: LLMRawOutput = {};
+  for (const [index, placeholder] of buildPlaceholderMap(questions).entries()) {
+    const value = values[index];
+    if (value === undefined) continue;
+    if (placeholder.field === "noul") {
+      raw[placeholder.questionId] = { noul: value };
+      continue;
+    }
+    const entry =
+      raw[placeholder.questionId] ?? (raw[placeholder.questionId] = {});
+    if (!entry.probabilities) entry.probabilities = {};
+    entry.probabilities[placeholder.key] = value;
+  }
+  return raw;
+}
+
 export function parseResponse(
   questions: Record<string, Question>,
-  raw: LLMRawOutput,
+  content: string,
   model: string,
   usage: { input_tokens: number; output_tokens: number }
 ): SystemOneResponse {
+  let raw: LLMRawOutput;
+  if (/\{[\s\S]*\}/.test(content)) {
+    raw = parseJson(content);
+  } else {
+    raw = rawFromValues(parseValuePairs(content), questions);
+    if (Object.keys(raw).length === 0) {
+      throw new Error(
+        `No index:value pairs found in LLM response: ${content.slice(0, 200)}`
+      );
+    }
+  }
+
   const answers: Record<string, Answer> = {};
 
   for (const [id, q] of Object.entries(questions)) {

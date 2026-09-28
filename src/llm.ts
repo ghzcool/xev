@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import type { LLMRawOutput } from "./types";
 
 export interface LLMClientConfig {
   baseURL: string;
@@ -8,36 +7,23 @@ export interface LLMClientConfig {
 }
 
 export interface LLMResult {
-  output: LLMRawOutput;
+  content: string;
   usage: {
     input_tokens: number;
     output_tokens: number;
   };
 }
 
-function parseLLMResponse(content: string): LLMRawOutput {
-  let cleaned = content.trim();
+function stripCodeFences(content: string): string {
+  const cleaned = content.trim();
+  if (!cleaned.startsWith("```")) return cleaned;
 
-  // Strip markdown code fences if present
-  if (cleaned.startsWith("```")) {
-    const firstNewline = cleaned.indexOf("\n");
-    const lastFence = cleaned.lastIndexOf("```");
-    if (lastFence > firstNewline) {
-      cleaned = cleaned.slice(firstNewline + 1, lastFence).trim();
-    }
+  const firstNewline = cleaned.indexOf("\n");
+  const lastFence = cleaned.lastIndexOf("```");
+  if (lastFence > firstNewline) {
+    return cleaned.slice(firstNewline + 1, lastFence).trim();
   }
-
-  // Try to extract JSON from the response
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(`No JSON found in LLM response: ${cleaned.slice(0, 200)}`);
-  }
-
-  try {
-    return JSON.parse(jsonMatch[0]);
-  } catch {
-    throw new Error(`Invalid JSON in LLM response: ${jsonMatch[0].slice(0, 200)}`);
-  }
+  return cleaned;
 }
 
 export async function callLLM(
@@ -55,7 +41,7 @@ export async function callLLM(
       {
         role: "system",
         content:
-          "You are a precise structured evaluation engine. You always return valid JSON with no explanations or markdown.",
+          "You are a precise structured evaluation engine. You always return only the requested index:value answer list, with no explanations or markdown.",
       },
       {
         role: "user",
@@ -70,10 +56,8 @@ export async function callLLM(
     throw new Error("LLM returned empty response");
   }
 
-  const output = parseLLMResponse(content);
-
   return {
-    output,
+    content: stripCodeFences(content),
     usage: {
       input_tokens: response.usage?.prompt_tokens ?? 0,
       output_tokens: response.usage?.completion_tokens ?? 0,
