@@ -169,3 +169,59 @@ Each decision entry:
 **Decision:** Keep the built-in presets as a hardcoded `PRESETS` object (read-only) and store user presets in localStorage under `xev_saved_presets` as `{ id, name, state, questions }` records. Saving with an existing name overwrites that preset (case-insensitive match); each saved preset chip has a "×" to remove it.
 **Rationale:** Every other demo value already persists in localStorage, so this is consistent, requires no server API or migration story, and keeps a throwaway testing UI from growing a persistence layer. A preset is a demo convenience, not part of the TypeSafe contract, so nothing in the server needs to know about it.
 **Consequence:** Saved presets are per-browser and are lost when localStorage is cleared; they are never uploaded. If presets must be shareable across machines, add `GET`/`POST`/`DELETE /v1/presets` with server-side storage rather than reshaping the localStorage records. Loading a preset bumps the question id counter so newly added questions cannot collide with ids from the loaded preset.
+
+### The Server Key Never Leaves Its Configured Host
+
+**Date:** 2026-09-28
+**Context:** `x-llm-base-url` let any caller aim the request at any host while the server attached its own `LLM_API_KEY` as a `Bearer` token. Naming an attacker's host was enough to collect the server's credentials. This applied to both `/v1/systemone` and the chat proxy.
+**Decision:** `config.ts` compares the requested base URL with the configured one. When they differ, `x-llm-api-key` is required and only the caller's key is used; otherwise the request is rejected with 400 and an explanation.
+**Rationale:** The demo page and multi-tenant callers legitimately need to point xev at a different backend, so the capability stays. What must not stay is the ability to redirect the server's own secret. Requiring a key is the smallest change that keeps both.
+**Consequence:** New code that builds an LLM call must go through `resolveLLMConfig` rather than reading `process.env.LLM_API_KEY` itself. If a deployment needs an allowlist of permitted hosts, add it in `resolveLLMConfig`; do not relax the key requirement. Covered by `config.test.ts`.
+
+### Incomplete Answers Are Flagged, Not Filled In Silently
+
+**Date:** 2026-09-28
+**Context:** The parser normalizes whatever it receives. A model that answered `0:0;1:0;2:0` produced a uniform distribution with a chosen winner, and a model that answered one of three score levels produced `confidence: 1.0`. A partial or refused answer was indistinguishable from a real one at the API level, which is the worst failure mode for an evaluation API.
+**Decision:** Count how many placeholders the model actually answered, per question. If nothing usable came back for a question, or the values were all zero, or only some arrived, `parseResponse` adds a line to a `warnings` array on the response (omitted entirely when the answer was complete). A response with nothing parseable at all throws `LLMResponseError` and becomes a 502 rather than a guess. Truncated output (`finish_reason: length`) is reported as a warning too.
+**Rationale:** Refusing to answer would break small local models that routinely answer loosely, and a client cannot detect fabrication from the numbers alone. A partial answer plus an explicit warning keeps the response usable while making the failure visible.
+**Consequence:** `SystemOneResponse` gains an optional `warnings: string[]`. This is an additive xev extension, not part of the TypeSafe shape, so clients that ignore unknown fields are unaffected. Never fill a value the model did not give without saying so in `warnings`; if this ever needs to become a hard failure, make it a flag rather than changing the default. Covered by `parser.test.ts`.
+
+### Best-Candidate Parsing Instead of Format Precedence
+
+**Date:** 2026-09-28
+**Context:** The parser preferred `index:value` pairs whenever any pair was found, even a single `7: 0.5` in the middle of the model's prose, and only then looked at JSON. Its JSON extraction also grabbed from the first `{` to the last `}`, so a stray brace in the model's reasoning broke the fallback.
+**Decision:** Parse both candidates and keep whichever answered more placeholders, with ties going to the pairs format. Extract JSON objects with a brace-balanced scan that skips braces inside strings.
+**Rationale:** Coverage is a better signal of which candidate is the real answer than the order they appear in, and the documented primary format still wins whenever both are complete. The balanced scan removes a class of failure that depended on the model's prose.
+**Consequence:** `parseContent` returns `{ raw, source }` and both formats can coexist in one response. If a new format is added, add it as another candidate with its own coverage rather than as a branch in a precedence chain.
+
+### JSON Error Handler
+
+**Date:** 2026-09-28
+**Context:** Express's default error handler returns an HTML page containing a stack trace and absolute filesystem paths. A malformed JSON body hit it, so a client parsing the documented `{ error }` shape got HTML and a 400 with a path disclosure.
+**Decision:** Add a terminal express error handler that always answers with JSON, uses the error's own status when it has one (body-parser sets 400 and 413), and returns a generic message for anything at 500 or above while logging the detail server-side.
+**Rationale:** The `{ error }` body is part of the API contract, and a stack trace is not something a client needs.
+**Consequence:** Unhandled errors are logged, not returned. LLM failures are mapped separately by `llmErrorStatus` (504 timeout, 429 passthrough, 502 otherwise) so clients can tell "the model failed" from "xev is broken".
+
+### node:test With tsx, No Test Framework
+
+**Date:** 2026-09-28
+**Context:** The parser's normalization, largest-remainder rounding, and confidence ordering encode documented Jev-parity rules, and there was no way to check a change against them. A review also turned up a wrong worked example in a code comment, which a test would have caught.
+**Decision:** Use `node:test` and `node:assert` through the already-present `tsx` (`npm test` runs `tsx --test "src/*.test.ts"`), one test file per module, excluded from the tsc build.
+**Rationale:** No new dependency, no config, and the tests run in milliseconds. AGENTS.md forbids new libraries without a decision entry; a framework bought nothing here.
+**Consequence:** Tests are colocated with the modules they cover as `*.test.ts`. If coverage or mocking needs grow, revisit before reaching for a framework.
+
+### Routers Are Supported Through the OpenAI SDK's Passthrough
+
+**Date:** 2026-09-28
+**Context:** OpenRouter, and other routers like Together or Fireworks, speak the OpenAI chat API but add conventions: `HTTP-Referer` / `X-Title` app attribution, a `provider` object in the request body for routing, fallback and data-collection policy, and a `/models` catalog. Supporting OpenRouter was a stated goal.
+**Decision:** Keep the OpenAI SDK as the only client. Send attribution as `defaultHeaders`, and the `provider` object by placing it in the request body, which the SDK forwards verbatim even though it is not in its types. Detect OpenRouter hosts in `config.ts` to decide whether to send attribution at all, and expose router features as `LLM_*` env vars plus `x-llm-*` headers rather than as new fields in the request body.
+**Rationale:** A second provider SDK would duplicate retry, timeout, and error handling for two extra headers. Keeping router options out of the request body means the TypeSafe request contract stays exactly as documented, and clients can still override per request.
+**Consequence:** The `provider` key depends on SDK passthrough of unknown body fields; `llm.test.ts` asserts it against a mock server so a future SDK upgrade that drops it fails loudly. If a router needs a non-OpenAI endpoint, add a client in `llm.ts` behind the same `callLLM` signature rather than leaking it into `index.ts`.
+
+### Reasoning Traces Are Excluded, Not Parsed
+
+**Date:** 2026-09-28
+**Context:** Trying `nvidia/nemotron-3.5-lightning:free` on OpenRouter returned `HTTP 502: No index:value pairs or JSON object found in LLM response: Here's a thinking process: ...`. The model spent its whole `max_tokens` budget reasoning, so it returned `finish_reason: length` with no answer list. The error blamed the format, not the cause.
+**Decision:** For OpenRouter targets, send `reasoning.exclude: true` by default and add a reasoning reserve (1024 tokens, or `LLM_REASONING_MAX_TOKENS`) to the answer budget. Ignore the `reasoning` / `reasoning_content` response fields, strip `<think>…</think>` blocks inlined in the content, and when a response turns out to be all thinking, raise an error carrying the reasoning and visible token counts plus the fixes. Thinking is bounded by OpenRouter's `reasoning.effort` (`LLM_REASONING_EFFORT`), defaulting to unset.
+**Rationale:** Reasoning tokens are billed and share the `max_tokens` budget, so xev has to reserve room for them or thinking models can never answer. The trace itself is never useful here — xev wants a short answer list — so excluding it is always right for the normal path. `exclude` hides the trace but does not make a model faster, so speed is a separate knob (`effort`) and is left to the operator.
+**Consequence:** Reasoning options are only sent to OpenRouter, since a plain OpenAI-compatible server has never heard of the parameter. `exclude` is on by default and `LLM_REASONING_EXCLUDE=false` exists for debugging. A model flagged `mandatory` in the `/v1/models` entry rejects `effort: "none"`; `low` and `minimal` are the safe choices. When a trace does come back next to an answer, the response carries a `warnings` entry rather than silently trusting it. Covered by `llm.test.ts` and `config.test.ts`.

@@ -1,5 +1,5 @@
 import { SystemOneRequestSchema, type SystemOneRequest } from "./types";
-import type { ZodError } from "zod";
+import type { ZodError, ZodInvalidUnionIssue } from "zod";
 
 export interface ValidationError {
   status: number;
@@ -7,9 +7,55 @@ export interface ValidationError {
   details?: unknown;
 }
 
+// A question that matches none of the type branches only produces "Invalid
+// input" from zod, which tells a client nothing. Walk the branches instead: the
+// type literals they expect, plus whatever the branch that accepted the type
+// was still missing.
+function describeUnionIssue(issue: ZodInvalidUnionIssue): string {
+  // zod reports sub-issue paths in full (questions.d.criteria), so trim the
+  // union's own path off to avoid prefixing the message twice.
+  const depth = issue.path.length;
+  const types = new Set<string>();
+  const extras: string[] = [];
+  let received: string | undefined;
+
+  for (const branch of issue.unionErrors) {
+    let typeFailed = false;
+    const missing: string[] = [];
+
+    for (const sub of branch.issues) {
+      const rel = sub.path.slice(depth);
+      if (rel.length === 1 && rel[0] === "type" && sub.code === "invalid_literal") {
+        typeFailed = true;
+        types.add(String(sub.expected));
+        received = String(sub.received);
+      } else {
+        missing.push(`${rel.join(".") || "(value)"}: ${sub.message}`);
+      }
+    }
+
+    // A branch that already rejected the type has nothing useful to add: for
+    // { type: "ranking" } the choice branch also reports "criteria: Required",
+    // which would point the caller at the wrong field.
+    if (!typeFailed) {
+      if (received !== undefined) types.add(received);
+      extras.push(...missing);
+    }
+  }
+
+  const expected = [...types].map((t) => `"${t}"`).join(" | ");
+  const base = expected
+    ? `expected a question of type ${expected}`
+    : "no question type matched";
+  return extras.length > 0 ? `${base}; missing: ${extras.join("; ")}` : base;
+}
+
 function formatZodError(err: ZodError): string {
   const issues = err.issues
-    .map((i) => `${i.path.join(".")}: ${i.message}`)
+    .map((i) => {
+      const where = i.path.join(".") || "(body)";
+      return `${where}: ${i.code === "invalid_union" ? describeUnionIssue(i) : i.message}`;
+    })
     .join("; ");
   return `Validation failed: ${issues}`;
 }

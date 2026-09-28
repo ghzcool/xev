@@ -48,9 +48,11 @@ export type ScoreQuestion = z.infer<typeof ScoreQuestionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 
 // ── Request ─────────────────────────────────────────────────────────────────
+// `model` is optional: Jev clients either omit it or send the "jev-latest"
+// alias, and index.ts falls back to LLM_MODEL in both cases.
 export const SystemOneRequestSchema = z.object({
   state: z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())]),
-  model: z.string(),
+  model: z.string().optional(),
   questions: z.record(QuestionSchema),
 });
 
@@ -58,39 +60,60 @@ export type SystemOneRequest = z.infer<typeof SystemOneRequestSchema>;
 
 // ── Answer types ────────────────────────────────────────────────────────────
 // A description is returned verbatim in `legend` (Jev keeps object/array levels structured)
-export type Description = string | Record<string, unknown> | unknown[];
+export const DescriptionSchema = z.union([
+  z.string(),
+  z.record(z.unknown()),
+  z.array(z.unknown()),
+]);
 
-export interface NoulAnswer {
-  type: "noul";
-  noul: number;
-}
+export type Description = z.infer<typeof DescriptionSchema>;
 
-export interface ChoiceAnswer {
-  type: "choice";
-  choice: string;
-  probabilities: Record<string, number>;
-  confidence: number;
-}
+export const NoulAnswerSchema = z.object({
+  type: z.literal("noul"),
+  noul: z.number().min(0).max(1),
+});
 
-export interface ScoreAnswer {
-  type: "score";
-  score: number;
-  legend: Record<string, Description>;
-  probabilities: Record<string, number>;
-  confidence: number;
-}
+export const ChoiceAnswerSchema = z.object({
+  type: z.literal("choice"),
+  choice: z.string(),
+  probabilities: z.record(z.number()),
+  confidence: z.number().min(0).max(1),
+});
 
-export type Answer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
+export const ScoreAnswerSchema = z.object({
+  type: z.literal("score"),
+  score: z.number(),
+  legend: z.record(DescriptionSchema),
+  probabilities: z.record(z.number()),
+  confidence: z.number().min(0).max(1),
+});
+
+export const AnswerSchema = z.union([
+  NoulAnswerSchema,
+  ChoiceAnswerSchema,
+  ScoreAnswerSchema,
+]);
+
+export type NoulAnswer = z.infer<typeof NoulAnswerSchema>;
+export type ChoiceAnswer = z.infer<typeof ChoiceAnswerSchema>;
+export type ScoreAnswer = z.infer<typeof ScoreAnswerSchema>;
+export type Answer = z.infer<typeof AnswerSchema>;
 
 // ── Response ────────────────────────────────────────────────────────────────
-export interface SystemOneResponse {
-  model: string;
-  answers: Record<string, Answer>;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
-}
+// `warnings` is an xev extension, not part of the TypeSafe shape: it is only
+// present when the model's answer was incomplete or degenerate, so a client
+// can tell a real answer from one the parser had to fill in.
+export const SystemOneResponseSchema = z.object({
+  model: z.string(),
+  answers: z.record(AnswerSchema),
+  usage: z.object({
+    input_tokens: z.number(),
+    output_tokens: z.number(),
+  }),
+  warnings: z.array(z.string()).optional(),
+});
+
+export type SystemOneResponse = z.infer<typeof SystemOneResponseSchema>;
 
 // ── LLM output ──────────────────────────────────────────────────────────────
 export interface LLMQuestionResult {

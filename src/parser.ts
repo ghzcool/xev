@@ -36,8 +36,9 @@ function clamp01(n: number): number {
 
 // Jev: confidence = clamp01((n * max_probability - 1) / (n - 1)).
 // Computed on the full-precision distribution, before the 2-decimal rounding
-// that the response reports, so it matches Jev's own rounding (e.g. a raw
-// peak of 0.7399 reports probabilities 0.74 but confidence 0.67).
+// that the response reports: a raw peak of 0.745 across 3 options reports a
+// probability of 0.75 but a confidence of 0.62, not the 0.63 that rescaling
+// the rounded peak would give.
 function computeConfidence(probabilities: Record<string, number>): number {
   const values = Object.values(probabilities);
   const count = values.length;
@@ -49,15 +50,25 @@ function computeConfidence(probabilities: Record<string, number>): number {
 
 // Brings the LLM's numbers to a distribution that sums to exactly 1.
 // Negative and non-finite values become 0; an all-zero answer becomes uniform.
-function normalizeProbabilities(
+function clampProbabilities(
   probabilities: Record<string, number>
 ): Record<string, number> {
   const clamped: Record<string, number> = {};
   for (const [key, val] of Object.entries(probabilities)) {
     clamped[key] = Number.isFinite(val) && val > 0 ? val : 0;
   }
+  return clamped;
+}
 
-  const total = Object.values(clamped).reduce((s, v) => s + v, 0);
+function totalOf(probabilities: Record<string, number>): number {
+  return Object.values(probabilities).reduce((s, v) => s + v, 0);
+}
+
+function normalizeProbabilities(
+  probabilities: Record<string, number>
+): Record<string, number> {
+  const clamped = clampProbabilities(probabilities);
+  const total = totalOf(clamped);
   const keys = Object.keys(clamped);
 
   if (total === 0) {
@@ -106,23 +117,66 @@ function toTwoDecimals(probabilities: Record<string, number>): Record<string, nu
 }
 
 function argmax(probabilities: Record<string, number>): string {
-  return Object.entries(probabilities).reduce((a, b) =>
-    b[1] > a[1] ? b : a
-  )[0];
+  const entries = Object.entries(probabilities);
+  if (entries.length === 0) return "";
+  // Ties keep the first key, matching criteria order.
+  return entries.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
 }
 
-function parseNoul(
-  _id: string,
-  _q: NoulQuestion,
-  raw: LLMRawOutput
-): NoulAnswer {
-  const entry = raw[_id];
-  if (!entry || entry.noul === undefined) {
-    return { type: "noul", noul: 0.5 };
+// How much of the answer the model actually gave us, per question. A missing
+// value is indistinguishable from a real answer once probabilities are
+// normalized, so this is what drives the `warnings` on the response.
+interface QuestionCoverage {
+  questionId: string;
+  answered: number;
+  expected: number;
+}
+
+function coverageByQuestion(
+  raw: LLMRawOutput,
+  questions: Record<string, Question>
+): QuestionCoverage[] {
+  const byQuestion = new Map<string, QuestionCoverage>();
+  for (const placeholder of buildPlaceholderMap(questions)) {
+    const cover = byQuestion.get(placeholder.questionId) ?? {
+      questionId: placeholder.questionId,
+      answered: 0,
+      expected: 0,
+    };
+    cover.expected += 1;
+    const entry = raw[placeholder.questionId];
+    const value =
+      placeholder.field === "noul"
+        ? entry?.noul
+        : entry?.probabilities?.[placeholder.key];
+    if (value !== undefined && value !== null && Number.isFinite(Number(value))) {
+      cover.answered += 1;
+    }
+    byQuestion.set(placeholder.questionId, cover);
+  }
+  return [...byQuestion.values()];
+}
+
+function totalAnswered(covers: QuestionCoverage[]): number {
+  return covers.reduce((sum, c) => sum + c.answered, 0);
+}
+
+interface ParsedAnswer<T> {
+  answer: T;
+  // The model returned nothing usable for this question (all values missing or
+  // zero), so the distribution below is uniform rather than earned.
+  degenerate: boolean;
+}
+
+function parseNoul(id: string, _q: NoulQuestion, raw: LLMRawOutput): ParsedAnswer<NoulAnswer> {
+  const entry = raw[id];
+  const value = entry?.noul;
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) {
+    return { answer: { type: "noul", noul: 0.5 }, degenerate: true };
   }
   return {
-    type: "noul",
-    noul: round2(clamp01(toNum(entry.noul))),
+    answer: { type: "noul", noul: round2(clamp01(toNum(value))) },
+    degenerate: false,
   };
 }
 
@@ -130,24 +184,28 @@ function parseChoice(
   id: string,
   q: ChoiceQuestion,
   raw: LLMRawOutput
-): ChoiceAnswer {
+): ParsedAnswer<ChoiceAnswer> {
   const entry = raw[id];
   const optionKeys = Object.keys(q.criteria);
 
-  // Missing options and a missing answer both fall through: an all-zero
-  // distribution normalizes to uniform, confidence 0, first option winning.
   const probs: Record<string, number> = {};
   for (const key of optionKeys) {
     probs[key] = entry?.probabilities ? toNum(entry.probabilities[key]) : 0;
   }
 
+  // No usable numbers at all: the uniform distribution below is a placeholder,
+  // not an answer, and confidence 0 is the only honest signal we have.
+  const degenerate = totalOf(clampProbabilities(probs)) === 0;
   const normalized = normalizeProbabilities(probs);
 
   return {
-    type: "choice",
-    choice: argmax(normalized),
-    probabilities: toTwoDecimals(normalized),
-    confidence: computeConfidence(normalized),
+    answer: {
+      type: "choice",
+      choice: argmax(normalized),
+      probabilities: toTwoDecimals(normalized),
+      confidence: computeConfidence(normalized),
+    },
+    degenerate,
   };
 }
 
@@ -155,7 +213,7 @@ function parseScore(
   id: string,
   q: ScoreQuestion,
   raw: LLMRawOutput
-): ScoreAnswer {
+): ParsedAnswer<ScoreAnswer> {
   const entry = raw[id];
   const levelCount = q.criteria.length;
 
@@ -164,6 +222,7 @@ function parseScore(
     probs[String(i)] = entry?.probabilities ? toNum(entry.probabilities[String(i)]) : 0;
   }
 
+  const degenerate = totalOf(clampProbabilities(probs)) === 0;
   const normalized = normalizeProbabilities(probs);
 
   let score = 0;
@@ -172,11 +231,14 @@ function parseScore(
   }
 
   return {
-    type: "score",
-    score: round2(score),
-    legend: buildLegend(q),
-    probabilities: toTwoDecimals(normalized),
-    confidence: computeConfidence(normalized),
+    answer: {
+      type: "score",
+      score: round2(score),
+      legend: buildLegend(q),
+      probabilities: toTwoDecimals(normalized),
+      confidence: computeConfidence(normalized),
+    },
+    degenerate,
   };
 }
 
@@ -200,17 +262,55 @@ function parseValuePairs(content: string): LLMValues {
   return values;
 }
 
-// Fallback for LLMs that answer with the JSON template filled in
-function parseJson(content: string): LLMRawOutput {
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(`No JSON found in LLM response: ${content.slice(0, 200)}`);
+// Fallback for LLMs that answer with the JSON template filled in.
+// Returns the index of the `}` that closes the `{` at `start`, ignoring braces
+// inside strings, or -1 if the object never closes.
+function findObjectEnd(content: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < content.length; i++) {
+    const ch = content[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
   }
-  try {
-    return JSON.parse(jsonMatch[0]) as LLMRawOutput;
-  } catch {
-    throw new Error(`Invalid JSON in LLM response: ${jsonMatch[0].slice(0, 200)}`);
+  return -1;
+}
+
+// Every balanced `{...}` block in the response. A greedy /\{[\s\S]*\}/ grab
+// breaks on the first stray brace in the model's prose.
+function extractJsonObjects(content: string): string[] {
+  const objects: string[] = [];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] !== "{") continue;
+    const end = findObjectEnd(content, i);
+    if (end === -1) continue;
+    objects.push(content.slice(i, end + 1));
+    i = end;
   }
+  return objects;
+}
+
+function parseJsonObjects(content: string): LLMRawOutput[] {
+  const parsed: LLMRawOutput[] = [];
+  for (const object of extractJsonObjects(content)) {
+    try {
+      parsed.push(JSON.parse(object) as LLMRawOutput);
+    } catch {
+      // Not a valid object on its own; try the next one.
+    }
+  }
+  return parsed;
 }
 
 // The response template keys questions as q0, q1, ... so the model never sees
@@ -247,49 +347,116 @@ function rawFromValues(
   return raw;
 }
 
-// Primary format is index:value pairs, JSON is the fallback.
+// Primary format is index:value pairs, JSON is the fallback. Both are parsed
+// and the one that answered more placeholders wins, so a stray `3: 0.5` in the
+// model's prose cannot beat a complete JSON answer.
 function parseContent(
   content: string,
   questions: Record<string, Question>
-): LLMRawOutput {
-  const values = parseValuePairs(content);
-  const fromPairs =
-    Object.keys(values).length > 0 ? rawFromValues(values, questions) : {};
-  if (Object.keys(fromPairs).length > 0) return fromPairs;
+): { raw: LLMRawOutput; source: "pairs" | "json" } {
+  const candidates: { raw: LLMRawOutput; source: "pairs" | "json" }[] = [];
 
-  if (/\{[\s\S]*\}/.test(content)) {
-    const fromJson = remapAliases(parseJson(content), buildAliasMap(questions));
-    if (Object.keys(fromJson).length > 0) return fromJson;
+  const values = parseValuePairs(content);
+  if (Object.keys(values).length > 0) {
+    candidates.push({ raw: rawFromValues(values, questions), source: "pairs" });
+  }
+  for (const object of parseJsonObjects(content)) {
+    const remapped = remapAliases(object, buildAliasMap(questions));
+    if (Object.keys(remapped).length > 0) {
+      candidates.push({ raw: remapped, source: "json" });
+    }
   }
 
-  throw new Error(
+  let best: { raw: LLMRawOutput; source: "pairs" | "json" } | undefined;
+  let bestAnswered = 0;
+  for (const candidate of candidates) {
+    const answered = totalAnswered(coverageByQuestion(candidate.raw, questions));
+    if (answered > bestAnswered) {
+      best = candidate;
+      bestAnswered = answered;
+    }
+  }
+
+  if (best && bestAnswered > 0) return best;
+
+  throw new LLMResponseError(
     `No index:value pairs or JSON object found in LLM response: ${content.slice(0, 200)}`
   );
+}
+
+// Thrown when the model's answer cannot be understood at all. The request was
+// valid, so callers map this to 502 (bad gateway), not 500.
+export class LLMResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LLMResponseError";
+  }
+}
+
+export interface ParseOptions {
+  // Warnings from the transport layer (truncated output, retries) that the
+  // parser cannot see but the caller should report alongside parse warnings.
+  warnings?: string[];
 }
 
 export function parseResponse(
   questions: Record<string, Question>,
   content: string,
   model: string,
-  usage: { input_tokens: number; output_tokens: number }
+  usage: { input_tokens: number; output_tokens: number },
+  options: ParseOptions = {}
 ): SystemOneResponse {
-  const raw = parseContent(content, questions);
+  const { raw, source } = parseContent(content, questions);
+  const covers = coverageByQuestion(raw, questions);
+  const coverFor = (id: string) => covers.find((c) => c.questionId === id);
 
   const answers: Record<string, Answer> = {};
+  const warnings: string[] = [...(options.warnings ?? [])];
 
   for (const [id, q] of Object.entries(questions)) {
+    const cover = coverFor(id);
+    const missing = !cover || cover.answered === 0;
+    const partial = !!cover && cover.answered > 0 && cover.answered < cover.expected;
+
     if (q.type === "noul") {
-      answers[id] = parseNoul(id, q, raw);
-    } else if (q.type === "choice") {
-      answers[id] = parseChoice(id, q, raw);
-    } else if (q.type === "score") {
-      answers[id] = parseScore(id, q, raw);
+      const parsed = parseNoul(id, q, raw);
+      answers[id] = parsed.answer;
+      if (missing || parsed.degenerate) {
+        warnings.push(
+          `question "${id}": the model returned no usable noul value; defaulted to 0.5`
+        );
+      }
+      continue;
     }
+
+    const parsed = q.type === "choice" ? parseChoice(id, q, raw) : parseScore(id, q, raw);
+    answers[id] = parsed.answer;
+
+    if (missing) {
+      warnings.push(
+        `question "${id}": the model returned no usable values; answered with a uniform distribution (confidence 0)`
+      );
+    } else if (parsed.degenerate) {
+      warnings.push(
+        `question "${id}": every value the model returned was 0; answered with a uniform distribution (confidence 0)`
+      );
+    } else if (partial && cover) {
+      warnings.push(
+        `question "${id}": the model answered ${cover.answered} of ${cover.expected} values; the rest were filled in`
+      );
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn(
+      `xev: ${warnings.length} warning(s) while parsing a "${source}" answer: ${warnings.join("; ")}`
+    );
   }
 
   return {
     model: `xev-${model}`,
     answers,
     usage,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

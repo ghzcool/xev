@@ -170,13 +170,15 @@ export function buildPrompt(
 
 RULES:
 1. Return ONLY the answer list. No markdown, no code fences, no explanations.
-2. The answer list is a ";"-separated list of "index:value" pairs, one pair per placeholder. Example: 0:0.1;1:0.234;2:0;3:1
-3. Answer every placeholder in the RESPONSE TEMPLATE below, each exactly once, in ascending index order.
-4. Every value must be a bare number between 0.0 and 1.0. No quotes, no units, no text.
-5. For Choice and Score questions, the values of that question MUST sum to exactly 1.0.
-6. For Noul questions, the value is a single number between 0.0 (definitely no) and 1.0 (definitely yes).
-7. Be precise. Do not split probability evenly unless truly uncertain.
-8. The keys q0, q1, ... in the RESPONSE TEMPLATE are the questions listed above, in order: q0 is the first question, q1 the second, and so on.
+2. Do not include your reasoning, analysis, planning, or any preamble. The list is the whole answer.
+3. The answer list is a ";"-separated list of "index:value" pairs, one pair per placeholder. Example: 0:0.1;1:0.234;2:0;3:1
+4. Answer every placeholder in the RESPONSE TEMPLATE below, each exactly once, in ascending index order.
+5. Every value must be a bare number between 0.0 and 1.0. No quotes, no units, no text.
+6. For Choice and Score questions, the values of that question MUST sum to exactly 1.0.
+7. For Noul questions, the value is a single number between 0.0 (definitely no) and 1.0 (definitely yes).
+8. Be precise. Do not split probability evenly unless truly uncertain.
+9. The keys q0, q1, ... in the RESPONSE TEMPLATE are the questions listed above, in order: q0 is the first question, q1 the second, and so on.
+10. Spend as few tokens as possible. Keep any deliberation to a minimum, then emit the list.
 
 STATE:
 ${stateStr}
