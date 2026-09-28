@@ -82,6 +82,15 @@
   .tag-choice { background: #1a3a5c; color: #5dade2; }
   .tag-score { background: #3a1a3a; color: #e551ba; }
   .tag-noul { background: #1a3a1a; color: #27ae60; }
+
+  .endpoint { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .endpoint code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; color: #5dade2; word-break: break-all; }
+  .method { background: #e551ba; color: #fff; font-weight: 700; font-size: 11px; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.05em; }
+  .tab-bar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tab { padding: 4px 12px; font-size: 12px; border-radius: 4px; border: 1px solid #333; background: #111; color: #888; cursor: pointer; font-family: inherit; }
+  .tab:hover { color: #fff; }
+  .tab.active { border-color: #e551ba; color: #fff; background: #1a1a1a; }
+  .copied { border-color: #27ae60 !important; color: #27ae60 !important; }
 </style>
 </head>
 <body>
@@ -133,10 +142,21 @@
     </div>
   </div>
 
-  <!-- Request Preview -->
+  <!-- API Request -->
   <div class="section">
-    <div class="section-title">Request Preview</div>
-    <div class="response-box" id="preview" style="max-height:300px"></div>
+    <div class="section-title">API Request <span style="text-transform:none;letter-spacing:0;color:#666;font-weight:400">(the same endpoint third-party apps call)</span></div>
+    <div class="endpoint">
+      <span class="method">POST</span>
+      <code id="req-url"></code>
+      <div style="flex:1"></div>
+      <button class="btn btn-sm" id="copy-btn" onclick="copyRequest()">Copy Body</button>
+    </div>
+    <div class="tab-bar">
+      <button class="tab active" id="tab-body" onclick="setReqTab('body')">Body</button>
+      <button class="tab" id="tab-headers" onclick="setReqTab('headers')">Headers</button>
+      <button class="tab" id="tab-curl" onclick="setReqTab('curl')">cURL</button>
+    </div>
+    <div class="response-box" id="preview" style="max-height:320px"></div>
   </div>
 
   <!-- Actions -->
@@ -279,6 +299,20 @@ window.removeScoreCrit = (i, ci) => { questions[i].criteria.splice(ci, 1); saveQ
 window.updateScoreCrit = (i, ci, v) => { questions[i].criteria[ci] = v; saveQuestions(); updatePreview(); };
 
 // ── Request Preview ────────────────────────────────────────────────────────
+const API_PATH = "/v1/systemone";
+let reqTab = "body";
+
+function apiUrl() { return location.origin + API_PATH; }
+
+function buildHeaders() {
+  const h = { "Content-Type": "application/json" };
+  const baseUrl = document.getElementById("cfg-url").value.replace(/\/+$/, "");
+  const apiKey = document.getElementById("cfg-key").value || "";
+  if (baseUrl) h["x-llm-base-url"] = baseUrl;
+  if (apiKey) h["x-llm-api-key"] = apiKey;
+  return h;
+}
+
 function buildRequest() {
   const questionsObj = {};
   questions.forEach(q => {
@@ -300,8 +334,57 @@ function buildRequest() {
   };
 }
 
+function getCurl() {
+  const body = JSON.stringify(buildRequest(), null, 2).replace(/'/g, "'\\''");
+  const lines = [`curl -X POST ${apiUrl()} \\`];
+  const headers = buildHeaders();
+  const entries = Object.entries(headers);
+  entries.forEach(([k, v], i) => {
+    const suffix = i === entries.length - 1 && !body ? "" : " \\";
+    lines.push(`  -H "${k}: ${v}"${suffix}`);
+  });
+  lines.push(`  -d '${body}'`);
+  return lines.join("\n");
+}
+
+function currentRequestText() {
+  if (reqTab === "curl") return getCurl();
+  if (reqTab === "headers") return JSON.stringify(buildHeaders(), null, 2);
+  return JSON.stringify(buildRequest(), null, 2);
+}
+
+function setReqTab(tab) {
+  reqTab = tab;
+  ["body", "headers", "curl"].forEach(t => {
+    document.getElementById("tab-" + t).className = t === tab ? "tab active" : "tab";
+  });
+  document.getElementById("copy-btn").textContent =
+    tab === "curl" ? "Copy cURL" : tab === "headers" ? "Copy Headers" : "Copy Body";
+  updatePreview();
+}
+
 function updatePreview() {
-  document.getElementById("preview").textContent = JSON.stringify(buildRequest(), null, 2);
+  document.getElementById("req-url").textContent = apiUrl();
+  document.getElementById("preview").textContent = currentRequestText();
+}
+
+async function copyRequest() {
+  const text = currentRequestText();
+  const btn = document.getElementById("copy-btn");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  const original = btn.textContent;
+  btn.classList.add("copied");
+  btn.textContent = "Copied";
+  setTimeout(() => { btn.classList.remove("copied"); btn.textContent = original; }, 1200);
 }
 
 // ── Send ───────────────────────────────────────────────────────────────────
@@ -316,55 +399,33 @@ async function sendRequest() {
   status.className = "status";
   status.textContent = "Sending...";
   respEl.className = "response-box";
-  respEl.textContent = "Waiting for LLM response...";
+  respEl.textContent = "Waiting for response...";
 
   const reqBody = buildRequest();
   const t0 = performance.now();
 
   try {
-    // Call our Node proxy (avoids CORS, uses server-side config)
-    const cfgUrl = document.getElementById("cfg-url").value.replace(/\/+$/, "");
-    const cfgKey = document.getElementById("cfg-key").value || "";
-    const res = await fetch("/v1/proxy/chat/completions", {
+    // Same endpoint third-party apps use: POST /v1/systemone
+    const res = await fetch(API_PATH, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-llm-base-url": cfgUrl,
-        "x-llm-api-key": cfgKey,
-      },
-      body: JSON.stringify({
-        model: reqBody.model,
-        messages: [
-          { role: "system", content: "You are a precise structured evaluation engine. You always return valid JSON with no explanations or markdown." },
-          { role: "user", content: buildFullPrompt(reqBody) },
-        ],
-        temperature: 0,
-      }),
+      headers: buildHeaders(),
+      body: JSON.stringify(reqBody),
     });
 
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`); }
+
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`HTTP ${res.status}: ${errText}`);
+      const details = data.details ? "\n" + JSON.stringify(data.details, null, 2) : "";
+      throw new Error(`HTTP ${res.status}: ${data.error || text}${details}`);
     }
 
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error("Empty response from LLM");
-
-    let parsed;
-    try {
-      const cleaned = content.replace(/^```json\s*/i, "").replace(/^```[\s\S]*?```$/m, "").trim();
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
-    } catch (e) {
-      throw new Error(`Failed to parse JSON: ${e.message}\nRaw: ${content.slice(0, 500)}`);
-    }
-
-    // Build TypeSafe-compatible response
-    const response = buildTypeSafeResponse(reqBody, parsed, data);
     respEl.className = "response-box success";
-    respEl.textContent = JSON.stringify(response, null, 2);
-    const tokens = data.usage ? `${data.usage.prompt_tokens || 0} in / ${data.usage.completion_tokens || 0} out` : "unknown";
+    respEl.textContent = JSON.stringify(data, null, 2);
+    const usage = data.usage || {};
+    const tokens = `${usage.input_tokens ?? 0} in / ${usage.output_tokens ?? 0} out`;
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
     status.className = "status ok";
     status.textContent = `OK (${tokens}, ${elapsed}s)`;
@@ -377,119 +438,6 @@ async function sendRequest() {
     btn.disabled = false;
     label.textContent = "Send Evaluation";
   }
-}
-
-// ── Prompt Builder (mirrors src/prompt.ts) ─────────────────────────────────
-function serializeInstr(v) {
-  if (typeof v === "string") return v;
-  return JSON.stringify(v, null, 2);
-}
-
-function buildFullPrompt(req) {
-  const stateStr = typeof req.state === "string" ? req.state : JSON.stringify(req.state, null, 2);
-  const qParts = Object.entries(req.questions).map(([id, q]) => {
-    let p = `Question ID: "${id}"\nType: ${q.type}\nInstructions: ${serializeInstr(q.instructions)}`;
-    if (q.type === "choice") {
-      const opts = Object.entries(q.criteria).map(([k, v]) => `  - "${k}": ${v === null ? "(no description)" : v}`).join("\n");
-      p += `\nOptions:\n${opts}\nReturn a probability (0.0 to 1.0) for EACH option. Probabilities must sum to 1.0.`;
-    } else if (q.type === "score") {
-      const lvls = q.criteria.map((l, i) => `  ${i}: ${l}`).join("\n");
-      p += `\nLevels:\n${lvls}\nReturn a probability (0.0 to 1.0) for EACH level. Probabilities must sum to 1.0.`;
-    } else {
-      p += `\nReturn a single number from 0.0 (definitely no) to 1.0 (definitely yes).`;
-    }
-    return p;
-  }).join("\n\n---\n\n");
-
-  // Build exact JSON template with placeholder zeros
-  const template = {};
-  for (const [id, q] of Object.entries(req.questions)) {
-    if (q.type === "choice") {
-      const probs = {};
-      Object.keys(q.criteria).forEach(k => probs[k] = 0);
-      template[id] = { probabilities: probs };
-    } else if (q.type === "score") {
-      const probs = {};
-      q.criteria.forEach((_, i) => probs[String(i)] = 0);
-      template[id] = { probabilities: probs };
-    } else {
-      template[id] = { noul: 0 };
-    }
-  }
-
-  return `You are a precise evaluation engine. Evaluate the STATE against each QUESTION.
-
-RULES:
-1. Return ONLY valid JSON. No markdown, no code fences, no explanations.
-2. Every probability must be between 0.0 and 1.0.
-3. For Choice and Score questions, probabilities MUST sum to exactly 1.0.
-4. For Noul questions, return a single number between 0.0 and 1.0.
-5. Be precise. Do not split probability evenly unless truly uncertain.
-6. Numbers must be bare (no quotes). Example: "0.5" is wrong, 0.5 is correct.
-
-STATE:
-${stateStr}
-
-QUESTIONS:
-${qParts}
-
-Return ONLY this JSON object, replacing the 0 values with your answers. Do not add or remove any keys:
-${JSON.stringify(template, null, 2)}`;
-}
-
-// ── Response Builder (mirrors src/parser.ts) ───────────────────────────────
-function toNum(v) { const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN; return isNaN(n) ? 0 : n; }
-function computeConfidence(probs) {
-  const vals = Object.values(probs);
-  if (vals.length === 0) return 0;
-  const entropy = vals.reduce((s, p) => p <= 0 ? s : s - p * Math.log2(p), 0);
-  const maxE = Math.log2(vals.length);
-  if (maxE === 0) return 1;
-  return Math.round((1 - entropy / maxE) * 100) / 100;
-}
-
-function norm(probs) {
-  const total = Object.values(probs).reduce((s, v) => s + v, 0);
-  if (total === 0) return probs;
-  const n = {};
-  for (const [k, v] of Object.entries(probs)) n[k] = Math.round((v / total) * 10000) / 10000;
-  const diff = 1 - Object.values(n).reduce((s, v) => s + v, 0);
-  const keys = Object.keys(n);
-  if (keys.length > 0 && Math.abs(diff) > 0.0001) n[keys[0]] = Math.round((n[keys[0]] + diff) * 10000) / 10000;
-  return n;
-}
-
-function buildTypeSafeResponse(req, raw, llmData) {
-  const answers = {};
-  for (const [id, q] of Object.entries(req.questions)) {
-    const entry = raw[id] || {};
-    if (q.type === "noul") {
-      answers[id] = { type: "noul", noul: Math.round(Math.max(0, Math.min(1, toNum(entry.noul) || 0.5)) * 100) / 100 };
-    } else if (q.type === "choice") {
-      const probs = {};
-      Object.keys(q.criteria).forEach(k => probs[k] = toNum(entry.probabilities?.[k]));
-      const n = norm(probs);
-      const choice = Object.entries(n).reduce((a, b) => b[1] > a[1] ? b : a)[0];
-      answers[id] = { type: "choice", choice, probabilities: n, confidence: computeConfidence(n) };
-    } else if (q.type === "score") {
-      const probs = {};
-      q.criteria.forEach((_, i) => probs[String(i)] = toNum(entry.probabilities?.[String(i)]));
-      const n = norm(probs);
-      let score = 0;
-      for (let i = 0; i < q.criteria.length; i++) score += i * (n[String(i)] || 0);
-      const legend = {};
-      q.criteria.forEach((l, i) => legend[String(i)] = l);
-      answers[id] = { type: "score", score: Math.round(score * 100) / 100, legend, probabilities: n, confidence: computeConfidence(n) };
-    }
-  }
-  return {
-    model: `xev-${req.model}`,
-    answers,
-    usage: {
-      input_tokens: llmData.usage?.prompt_tokens ?? 0,
-      output_tokens: llmData.usage?.completion_tokens ?? 0,
-    },
-  };
 }
 
 // ── Presets ────────────────────────────────────────────────────────────────
