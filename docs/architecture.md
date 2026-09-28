@@ -150,7 +150,7 @@ deployment may be the only client.
 - **Confidence via peak rescaling**: Confidence is `clamp01((n * max_probability - 1) / (n - 1))` computed on full-precision probabilities — Jev's documented formula — not an entropy measure and not an LLM self-assessment.
 - **Question ids stay client-side**: Questions are labeled `q0`, `q1`, ... in the prompt, so the model never sees caller-defined ids (Jev behaves the same way). The parser maps aliases back through `buildAliasMap`.
 - **Legend passthrough**: Score legends are built from the criteria as given. String levels stay strings; object/array levels stay structured objects, exactly as Jev returns them.
-- **Validation limits**: Choice accepts 1-255 options and Score 2-10 levels, per TypeSafe's documented limits; violations are rejected with HTTP 422.
+- **Validation limits**: A request must carry at least one question; Choice accepts 1-255 options and Score 2-10 levels, per TypeSafe's documented limits. Violations are rejected with HTTP 422. An empty `questions` object is a valid record to zod, so it is checked explicitly: it would otherwise reach the model as a prompt with no placeholders and come back as an answer with nowhere to go.
 - **TypeSafe-shaped model list**: `GET /v1/models` returns `{ models: [{ name, description, release_date }] }`, the documented Jev shape, rather than the OpenAI `{ data: [...] }` shape.
 - **Incomplete answers are reported, not hidden**: normalization makes a missing value look like a real one, so the parser counts coverage and says so in `warnings`.
 - **Errors are always JSON**: an express error handler keeps body-parser failures and thrown errors inside the `{ error }` contract instead of Express's HTML page with a stack trace.

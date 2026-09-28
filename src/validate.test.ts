@@ -121,6 +121,16 @@ test("an unknown question type is rejected", () => {
   assert.equal(result.success, false);
 });
 
+test("an empty questions map is rejected", () => {
+  // Valid to zod as a record, but there is nothing to evaluate and no
+  // placeholder for the model to answer.
+  const result = validate({ state: "hello", questions: {} });
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.equal(result.error.status, 422);
+  assert.match(result.error.error, /at least one question/);
+});
+
 test("a missing state is rejected with details", () => {
   const result = validate({ questions: { n: { type: "noul", instructions: "x" } } });
   assert.equal(result.success, false);

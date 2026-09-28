@@ -264,6 +264,7 @@ ignore unknown fields are unaffected.
 
 ### Limits
 
+- At least one question is required; an empty `questions` object is a 422.
 - Choice: 1-255 options; Score: 2-10 levels. Violations are rejected with HTTP 422.
 - Probabilities are reported with 2 decimals and always sum to 1.
 - `confidence` = `clamp01((n * max_probability - 1) / (n - 1))`, computed on full-precision probabilities — Jev's formula.

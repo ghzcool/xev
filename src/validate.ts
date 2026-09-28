@@ -70,8 +70,20 @@ export function validateRequest(body: unknown): {
   const result = SystemOneRequestSchema.safeParse(body);
 
   if (result.success) {
-    // Additional validation: check question types are valid
     const questions = result.data.questions;
+    const questionCount = Object.keys(questions).length;
+    if (questionCount === 0) {
+      // An empty questions map is a structurally valid record to zod, but there
+      // is nothing to evaluate and no placeholder for the model to answer.
+      return {
+        success: false,
+        error: {
+          status: 422,
+          error:
+            "Validation failed: questions must contain at least one question",
+        },
+      };
+    }
     for (const [id, q] of Object.entries(questions)) {
       if (q.type === "choice") {
         const optionCount = Object.keys(q.criteria).length;

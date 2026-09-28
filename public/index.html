@@ -435,6 +435,14 @@ function setReqTab(tab) {
 function updatePreview() {
   document.getElementById("req-url").textContent = apiUrl();
   document.getElementById("preview").textContent = currentRequestText();
+  // Nothing to evaluate without a question; a choice also needs at least one
+  // option, which the server enforces with a 422.
+  const noCriteria = questions.some(q => q.type === "choice" && !(q.criteria || []).some(c => String(c.key || "").trim()));
+  const sendBtn = document.getElementById("send-btn");
+  const incomplete = questions.length === 0 || noCriteria;
+  sendBtn.title = incomplete
+    ? (questions.length === 0 ? "Add at least one question" : "A choice question needs at least one option key")
+    : "";
 }
 
 async function copyRequest() {
@@ -462,6 +470,12 @@ async function sendRequest() {
   const label = document.getElementById("send-label");
   const status = document.getElementById("status");
   const respEl = document.getElementById("response");
+
+  if (questions.length === 0) {
+    status.className = "status err";
+    status.textContent = "Add at least one question first";
+    return;
+  }
 
   btn.disabled = true;
   label.innerHTML = '<span class="spinner"></span> Evaluating...';

@@ -379,6 +379,17 @@ function parseContent(
 
   if (best && bestAnswered > 0) return best;
 
+  // Pairs were parsed but there was nothing to map them onto, which means the
+  // request carried no question values. Saying "no pairs found" here would be
+  // plainly false: the model answered correctly, we had nowhere to put it.
+  if (candidates.length > 0) {
+    throw new LLMResponseError(
+      buildPlaceholderMap(questions).length === 0
+        ? "The request contained no questions, so the model's answer could not be mapped onto anything"
+        : `The model's answer did not match any placeholder: ${content.slice(0, 200)}`
+    );
+  }
+
   throw new LLMResponseError(
     `No index:value pairs or JSON object found in LLM response: ${content.slice(0, 200)}`
   );

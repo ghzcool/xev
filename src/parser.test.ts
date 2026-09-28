@@ -304,6 +304,20 @@ test("every response validates against SystemOneResponseSchema", () => {
   }
 });
 
+test("a valid pair with nothing to map it onto is not blamed on the format", () => {
+  // The model answered 0:1 correctly; the request carried no questions. Saying
+  // "no index:value pairs found" would be plainly false.
+  assert.throws(
+    () => parse({}, "0:1"),
+    (err: unknown) => {
+      assert.ok(err instanceof LLMResponseError);
+      assert.match(err.message, /no questions/i);
+      assert.equal(err.message.includes("No index:value pairs"), false);
+      return true;
+    }
+  );
+});
+
 test("the model name is prefixed with xev-", () => {
   assert.equal(parse(CHOICE_THREE, "0:1;1:0;2:0").model, "xev-test-model");
 });
