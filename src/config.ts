@@ -72,6 +72,38 @@ export function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+/**
+ * The address the server is reachable at, for the startup banner. A wildcard
+ * bind (the default) is not an address anyone can click, so it becomes
+ * localhost; IPv6 literals need brackets.
+ */
+export function formatBaseUrl(host: string | undefined, port: number): string {
+  const name =
+    !host || host === "0.0.0.0" || host === "::" || host === "[::]" ? "localhost" : host;
+  return `http://${name.includes(":") ? `[${name}]` : name}:${port}`;
+}
+
+/**
+ * OSC 8 hyperlink. Terminals that do not understand it (legacy Windows conhost)
+ * would print the escape codes, so it is only emitted where it is known to work.
+ */
+export function supportsHyperlinks(): boolean {
+  if (!process.stdout.isTTY || process.env.NO_COLOR) return false;
+  if (process.platform === "win32") {
+    return Boolean(
+      process.env.WT_SESSION ||
+        process.env.TERM_PROGRAM === "vscode" ||
+        process.env.ConEmuTask
+    );
+  }
+  return process.env.TERM !== "dumb";
+}
+
+export function hyperlink(url: string, label = url): string {
+  if (!supportsHyperlinks()) return label;
+  return `\u001b]8;;${url}\u001b\\${label}\u001b\\`;
+}
+
 export function isOpenRouter(baseURL: string): boolean {
   return /(^|\.)openrouter\.ai$/i.test(safeHost(baseURL));
 }

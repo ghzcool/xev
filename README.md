@@ -21,6 +21,23 @@ npm run dev
 # Open http://localhost:3000
 ```
 
+On startup the server prints clickable links (OSC 8 hyperlinks where the terminal supports them,
+plain text otherwise):
+
+```
+Xev is running
+
+  Demo page  http://localhost:3000/
+  Health     http://localhost:3000/health
+  Models     http://localhost:3000/v1/models
+  Evaluate   http://localhost:3000/v1/systemone  (POST)
+
+  LLM        qwen/qwen3.5-9b
+  Backend    http://127.0.0.1:1234/v1
+
+  Open the demo page above. Ctrl+C to stop.
+```
+
 ## Configuration
 
 Set environment variables in `.env`:
@@ -44,6 +61,7 @@ Set environment variables in `.env`:
 | `CORS_ORIGIN` | (empty) | Comma-separated browser origins, or `*`; empty sends no CORS headers |
 | `RATE_LIMIT_RPM` | `0` (off) | Requests per minute per client on `/v1/systemone` |
 | `PORT` | `3000` | Server port |
+| `HOST` | (all interfaces) | Interface to bind; the startup banner links `localhost` unless set |
 
 Works with any OpenAI-compatible API: LM Studio, Ollama, OpenAI, vLLM, OpenRouter, etc.
 

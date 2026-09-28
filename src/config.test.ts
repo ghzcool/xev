@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import type { Request } from "express";
 import {
   ConfigError,
+  formatBaseUrl,
   getConfig,
+  hyperlink,
   isOpenRouter,
   isTypeSafeAlias,
   maxTokensFor,
@@ -218,6 +220,25 @@ test("an explicit cap wins over the computed one", () => {
   assert.equal(resolveLLMConfig(req({ "x-llm-max-tokens": "512" }), BASE, undefined, 2).maxTokens, 512);
   const withEnv: ServerConfig = { ...BASE, maxTokens: 256 };
   assert.equal(resolveLLMConfig(req(), withEnv, undefined, 2).maxTokens, 256);
+});
+
+// ── Startup banner ──────────────────────────────────────────────────────────
+
+test("a wildcard bind is shown as localhost", () => {
+  assert.equal(formatBaseUrl(undefined, 3000), "http://localhost:3000");
+  assert.equal(formatBaseUrl("0.0.0.0", 8080), "http://localhost:8080");
+  assert.equal(formatBaseUrl("::", 3000), "http://localhost:3000");
+});
+
+test("a specific host is used as given, IPv6 in brackets", () => {
+  assert.equal(formatBaseUrl("127.0.0.1", 3000), "http://127.0.0.1:3000");
+  assert.equal(formatBaseUrl("::1", 3000), "http://[::1]:3000");
+});
+
+test("the banner always shows something clickable", () => {
+  // Without a TTY (pipes, CI) there are no escape codes, just the URL text.
+  const link = hyperlink("http://localhost:3000/");
+  assert.match(link, /http:\/\/localhost:3000\//);
 });
 
 // ── Environment parsing ─────────────────────────────────────────────────────

@@ -177,6 +177,17 @@ deployment may be the only client.
 Status codes: `400` bad JSON body or bad `x-llm-*` value, `422` validation, `429` rate limited,
 `502` LLM failure or unparseable answer, `504` LLM timeout.
 
+## Startup
+
+`index.ts` prints a banner with links to the demo page and the three read-only endpoints, using
+OSC 8 hyperlinks where the terminal supports them (Windows Terminal, VS Code, iTerm2) and plain
+text everywhere else, so a URL is always visible and clickable. A wildcard bind is displayed as
+`localhost`; setting `HOST` to a specific address shows that address instead. A port already in use
+is reported as one actionable line rather than an unhandled `EADDRINUSE` crash.
+
+`start()` runs only when `index.ts` is the main module, so `import app from "./index"` in a test
+does not bind a port.
+
 ## Adding a New Question Type
 
 1. Add the question type to `types.ts` (schema + TypeScript type)

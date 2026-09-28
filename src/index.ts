@@ -6,7 +6,9 @@ import { callLLM, llmErrorStatus } from "./llm";
 import { parseResponse, LLMResponseError } from "./parser";
 import {
   ConfigError,
+  formatBaseUrl,
   getConfig,
+  hyperlink,
   isOpenRouter,
   normalizeBaseUrl,
   resolveLLMConfig,
@@ -268,15 +270,50 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const HOST = process.env.HOST || undefined;
 
-app.listen(PORT, () => {
-  const config = getConfig();
-  console.log(`Xev server running on port ${PORT}`);
-  console.log(`Using LLM: ${config.model} at ${config.baseURL}`);
-  if (isOpenRouter(config.baseURL)) {
-    console.log(`OpenRouter detected: /v1/models lists the router's catalog`);
-  }
-  console.log(`POST /v1/systemone - evaluate state against questions`);
-});
+export function banner(base: string): string {
+  const rows: [string, string][] = [
+    ["Demo page", hyperlink(`${base}/`)],
+    ["Health", hyperlink(`${base}/health`)],
+    ["Models", hyperlink(`${base}/v1/models`)],
+    ["Evaluate", `${hyperlink(`${base}/v1/systemone`)}  (POST)`],
+  ];
+  const width = Math.max(...rows.map(([label]) => label.length));
+  return rows
+    .map(([label, value]) => `  ${label.padEnd(width)}  ${value}`)
+    .join("\n");
+}
 
+const config = getConfig();
+
+export function start(port = PORT, host: string | undefined = HOST): void {
+  const base = formatBaseUrl(host, port);
+  const ready = () => {
+    console.log(`\nXev is running\n`);
+    console.log(banner(base));
+    console.log(`\n  LLM        ${config.model}`);
+    console.log(`  Backend    ${config.baseURL}`);
+    if (isOpenRouter(config.baseURL)) {
+      const effort = config.reasoning.effort ? `, effort ${config.reasoning.effort}` : "";
+      console.log(`  Reasoning  kept out of the response${effort}`);
+    }
+    console.log(`\n  Open the demo page above. Ctrl+C to stop.\n`);
+  };
+
+  const server = host ? app.listen(port, host, ready) : app.listen(port, ready);
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `Port ${port} is already in use. Set PORT to pick another one: PORT=3001 npm start`
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+}
+
+if (require.main === module) start();
+
+export { app };
 export default app;
