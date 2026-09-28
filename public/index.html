@@ -42,8 +42,8 @@
 
   .criteria-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
   .criteria-row input { flex: 1; }
-  .criteria-row .remove-crit { background: none; border: none; color: #666; cursor: pointer; font-size: 16px; }
-  .criteria-row .remove-crit:hover { color: #e551ba; }
+  .remove-crit { background: none; border: none; color: #666; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; }
+  .remove-crit:hover { color: #e551ba; }
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
@@ -73,7 +73,13 @@
   .status.ok { color: #27ae60; }
   .status.err { color: #e74c3c; }
 
-  .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .preset-label { font-size: 12px; color: #666; }
+  .preset-input { width: 160px; flex: none; padding: 4px 8px; font-size: 12px; }
+  .preset-chip { display: inline-flex; align-items: center; }
+  .preset-chip .remove-crit { font-size: 15px; }
+  .preset-chip .remove-crit:hover { color: #e74c3c; }
+  .preset-msg { font-size: 12px; }
 
   .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #555; border-top-color: #e551ba; border-radius: 50%; animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -124,10 +130,17 @@
       <textarea id="state" rows="4" placeholder="Paste text, chat log, or JSON here..."></textarea>
     </div>
     <div class="preset-bar">
-      <span style="font-size:12px;color:#666;line-height:26px">Presets:</span>
+      <span class="preset-label">Presets:</span>
       <button class="btn btn-sm" onclick="loadPreset('support')">Support Ticket</button>
       <button class="btn btn-sm" onclick="loadPreset('code')">Code Review</button>
       <button class="btn btn-sm" onclick="loadPreset('email')">Email Triage</button>
+    </div>
+    <div class="preset-bar">
+      <span class="preset-label">Saved:</span>
+      <span id="saved-presets" style="display:contents"></span>
+      <input id="preset-name" class="preset-input" placeholder="Preset name" onkeydown="if(event.key==='Enter')savePreset()" />
+      <button class="btn btn-sm btn-primary" onclick="savePreset()">Save</button>
+      <span class="preset-msg" id="preset-msg"></span>
     </div>
   </div>
 
@@ -470,12 +483,103 @@ const PRESETS = {
 
 window.loadPreset = (name) => {
   const p = PRESETS[name];
-  if (!p) return;
-  document.getElementById("state").value = p.state;
-  save("state", p.state);
-  questions = JSON.parse(JSON.stringify(p.questions));
+  if (p) applyPreset(p);
+};
+
+// ── Saved presets (localStorage) ────────────────────────────────────────────
+let savedPresets = readSavedPresets();
+
+function readSavedPresets() {
+  try {
+    const parsed = JSON.parse(load("saved_presets", "[]"));
+    return Array.isArray(parsed) ? parsed.filter(p => p && p.name) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedPresets() {
+  save("saved_presets", JSON.stringify(savedPresets));
+}
+
+function applyPreset(p) {
+  document.getElementById("state").value = p.state || "";
+  save("state", p.state || "");
+  questions = JSON.parse(JSON.stringify(p.questions || []));
+  bumpQuestionCounter(questions);
   saveQuestions();
   renderQuestions();
+}
+
+function bumpQuestionCounter(qs) {
+  qs.forEach(q => {
+    const m = /^q(\d+)$/.exec(q.id || "");
+    if (m) questionIdCounter = Math.max(questionIdCounter, parseInt(m[1], 10) + 1);
+  });
+  save("qcounter", String(questionIdCounter));
+}
+
+function renderPresets() {
+  const el = document.getElementById("saved-presets");
+  if (savedPresets.length === 0) {
+    el.innerHTML = '<span class="preset-label" style="color:#444">none yet</span>';
+    return;
+  }
+  el.innerHTML = savedPresets.map(p => `<span class="preset-chip">
+      <button class="btn btn-sm" onclick="loadSavedPreset('${p.id}')">${esc(p.name)}</button>
+      <button class="remove-crit" title="Remove preset" onclick="removePreset('${p.id}')">&times;</button>
+    </span>`).join("");
+}
+
+let presetMsgTimer = null;
+function showPresetMsg(text, isError) {
+  const el = document.getElementById("preset-msg");
+  el.textContent = text;
+  el.style.color = isError ? "#e74c3c" : "#27ae60";
+  clearTimeout(presetMsgTimer);
+  presetMsgTimer = setTimeout(() => { el.textContent = ""; }, 2500);
+}
+
+window.savePreset = () => {
+  const input = document.getElementById("preset-name");
+  const name = input.value.trim();
+  if (!name) {
+    showPresetMsg("Enter a name first", true);
+    input.focus();
+    return;
+  }
+  const existing = savedPresets.find(p => p.name.toLowerCase() === name.toLowerCase());
+  const snapshot = JSON.parse(JSON.stringify(questions));
+  if (existing) {
+    existing.name = name;
+    existing.state = document.getElementById("state").value;
+    existing.questions = snapshot;
+  } else {
+    savedPresets.push({
+      id: "p" + Date.now().toString(36),
+      name,
+      state: document.getElementById("state").value,
+      questions: snapshot,
+    });
+  }
+  persistSavedPresets();
+  input.value = "";
+  renderPresets();
+  showPresetMsg(existing ? `Overwrote "${name}"` : `Saved "${name}"`);
+};
+
+window.loadSavedPreset = (id) => {
+  const p = savedPresets.find(x => x.id === id);
+  if (p) applyPreset(p);
+};
+
+window.removePreset = (id) => {
+  const i = savedPresets.findIndex(p => p.id === id);
+  if (i === -1) return;
+  const [removed] = savedPresets.splice(i, 1);
+  persistSavedPresets();
+  renderPresets();
+  showPresetMsg(`Removed "${removed.name}"`);
 };
 
 window.clearAll = () => {
@@ -491,6 +595,7 @@ window.clearAll = () => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 renderQuestions();
+renderPresets();
 updatePreview();
 </script>
 </body>

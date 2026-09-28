@@ -49,6 +49,12 @@ The proxy accepts optional headers to override server-side config:
 - `x-llm-base-url` - overrides `LLM_BASE_URL` env var
 - `x-llm-api-key` - overrides `LLM_API_KEY` env var
 
+## Demo Presets
+
+The demo page ships three read-only built-in presets (Support Ticket, Code Review, Email Triage) defined in the `PRESETS` object in `public/index.html`. Users can snapshot the current state + questions as a named preset ("Save"), overwrite an existing saved preset by reusing its name (case-insensitive), and delete saved presets ("×" on the chip). Saved presets are stored in the browser under the `xev_saved_presets` localStorage key as `{ id, name, state, questions }` records; loading one replaces the current state and questions and bumps the question id counter so new questions cannot reuse loaded ids.
+
+This is demo-only: the server has no preset storage and no preset endpoints.
+
 ## Data Flow
 
 1. **Request** arrives as JSON matching `SystemOneRequest` (state + questions map)

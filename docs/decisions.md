@@ -128,7 +128,7 @@ Each decision entry:
 **Context:** Jev's published responses show probabilities with two decimal places (e.g. `0.67`, `0.84`), including examples where the reported values still sum to exactly 1 while full-precision values would not.
 **Decision:** Compute confidence on the full-precision distribution, then round the reported probabilities to 2 decimals with a largest-remainder pass so the rounded values still sum to 1.00. Scores are rounded to 2 decimals as well; noul is clamped to [0, 1] and rounded to 2 decimals.
 **Rationale:** Matches Jev's output exactly, avoids `0.6666666666666666` in JSON, and keeps the invariant that probabilities sum to 1. Rounding after confidence avoids drift (e.g. `0.86` with 4 options gives confidence `0.81` from full precision).
-**Consequence:** Clients doing `JSON.stringify` on our response see the same numbers Jev sends. Do not round before computing confidence. If a caller needs more precision, they must use the full distribution themselves — we do not store it.
+**Consequence:** Clients doing `JSON.stringify` on our response see the same numbers Jev sends. Do not round before computing confidence. If a caller needs more precision, they must use the full distribution themselves ï¿½ we do not store it.
 
 ### No Question Ids Sent to the Model
 
@@ -161,3 +161,11 @@ Each decision entry:
 **Decision:** Return `{ models: [{ name, description, release_date }] }` with `release_date` set to the server's serving date (`SERVING_SINCE`).
 **Rationale:** Clients written against Jev's documented shape parse our response without changes.
 **Consequence:** Do not switch back to the OpenAI `data` shape. If a client needs OpenAI-style discovery, add a separate route rather than changing this one.
+
+### Presets Live in Browser localStorage
+
+**Date:** 2026-09-28
+**Context:** The demo page's built-in presets (Support Ticket, Code Review, Email Triage) are hardcoded and read-only, so there was no way to keep a scenario you had just built. Saving presets could mean a new server endpoint with a data directory, or browser storage.
+**Decision:** Keep the built-in presets as a hardcoded `PRESETS` object (read-only) and store user presets in localStorage under `xev_saved_presets` as `{ id, name, state, questions }` records. Saving with an existing name overwrites that preset (case-insensitive match); each saved preset chip has a "Ã—" to remove it.
+**Rationale:** Every other demo value already persists in localStorage, so this is consistent, requires no server API or migration story, and keeps a throwaway testing UI from growing a persistence layer. A preset is a demo convenience, not part of the TypeSafe contract, so nothing in the server needs to know about it.
+**Consequence:** Saved presets are per-browser and are lost when localStorage is cleared; they are never uploaded. If presets must be shareable across machines, add `GET`/`POST`/`DELETE /v1/presets` with server-side storage rather than reshaping the localStorage records. Loading a preset bumps the question id counter so newly added questions cannot collide with ids from the loaded preset.

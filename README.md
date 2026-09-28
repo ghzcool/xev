@@ -39,11 +39,12 @@ Works with any OpenAI-compatible API: LM Studio, Ollama, OpenAI, vLLM, etc.
 Open `http://localhost:3000` in your browser for a testing UI with:
 - Configurable LLM connection (base URL, model, API key)
 - State textarea with presets (Support Ticket, Code Review, Email Triage)
+- Save your own presets by name, reload them later, and remove them with the "×" on the chip
 - Question builder for Choice, Score, and Noul types
 - Live request preview
 - Response viewer with probabilities and confidence
 
-All values are saved in localStorage.
+All values, including saved presets, are saved in localStorage.
 
 ## API
 
