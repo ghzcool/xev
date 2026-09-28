@@ -57,6 +57,9 @@ export const SystemOneRequestSchema = z.object({
 export type SystemOneRequest = z.infer<typeof SystemOneRequestSchema>;
 
 // ── Answer types ────────────────────────────────────────────────────────────
+// A description is returned verbatim in `legend` (Jev keeps object/array levels structured)
+export type Description = string | Record<string, unknown> | unknown[];
+
 export interface NoulAnswer {
   type: "noul";
   noul: number;
@@ -72,7 +75,7 @@ export interface ChoiceAnswer {
 export interface ScoreAnswer {
   type: "score";
   score: number;
-  legend: Record<string, string>;
+  legend: Record<string, Description>;
   probabilities: Record<string, number>;
   confidence: number;
 }

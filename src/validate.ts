@@ -27,21 +27,33 @@ export function validateRequest(body: unknown): {
     // Additional validation: check question types are valid
     const questions = result.data.questions;
     for (const [id, q] of Object.entries(questions)) {
-      if (q.type === "choice" && Object.keys(q.criteria).length === 0) {
-        return {
-          success: false,
-          error: {
-            status: 422,
-            error: `Question "${id}" is a choice with no options`,
-          },
-        };
+      if (q.type === "choice") {
+        const optionCount = Object.keys(q.criteria).length;
+        if (optionCount === 0) {
+          return {
+            success: false,
+            error: {
+              status: 422,
+              error: `Question "${id}" is a choice with no options`,
+            },
+          };
+        }
+        if (optionCount > 255) {
+          return {
+            success: false,
+            error: {
+              status: 422,
+              error: `Question "${id}" has ${optionCount} options; a choice accepts at most 255`,
+            },
+          };
+        }
       }
-      if (q.type === "score" && q.criteria.length < 2) {
+      if (q.type === "score" && (q.criteria.length < 2 || q.criteria.length > 10)) {
         return {
           success: false,
           error: {
             status: 422,
-            error: `Question "${id}" is a score with fewer than 2 levels`,
+            error: `Question "${id}" is a score with ${q.criteria.length} levels; a score accepts 2 to 10`,
           },
         };
       }

@@ -53,9 +53,9 @@ The proxy accepts optional headers to override server-side config:
 
 1. **Request** arrives as JSON matching `SystemOneRequest` (state + questions map)
 2. **Validation** checks required fields and question type constraints
-3. **Prompt builder** serializes state and questions, then generates a response template whose values are indexed placeholders (`${0}`, `${1}`, ...), defined by `buildPlaceholderMap`
+3. **Prompt builder** serializes state and questions, then generates a response template whose values are indexed placeholders (`${0}`, `${1}`, ...), defined by `buildPlaceholderMap`. Questions appear as `q0`, `q1`, ... — the caller's question ids are never sent to the model
 4. **LLM client** sends the prompt and returns the raw response text (code fences stripped)
-5. **Parser** resolves the text to values: it reads `;`-separated `index:value` pairs and maps each index back to its question field through `buildPlaceholderMap` (falling back to JSON if the response contains a JSON object), coerces string values to numbers, normalizes probabilities per question type, computes confidence as `clamp01((n * max_probability - 1) / (n - 1))`
+5. **Parser** resolves the text to values: it reads `;`-separated `index:value` pairs first and maps each index back to its question field through `buildPlaceholderMap`, falling back to a JSON object (with `qN` keys mapped back to question ids) when there are no pairs; coerces string values to numbers, clamps negatives to 0 and normalizes probabilities per question type, computes confidence as `clamp01((n * max_probability - 1) / (n - 1))` on the full-precision distribution, then rounds probabilities to 2 decimals so they still sum to exactly 1
 6. **Response** is returned in `SystemOneResponse` format
 
 ## Key Design Decisions
@@ -66,8 +66,12 @@ The proxy accepts optional headers to override server-side config:
 - **String coercion**: The parser converts string numbers (e.g., `"0.5"`) to actual numbers, since some LLMs return quoted numbers (mainly in the JSON fallback path).
 - **No response_format**: `response_format: { type: "json_object" }` is not used because many local LLM servers (LM Studio, Ollama) don't support it. Instead, the prompt instructs the LLM to return a bare `index:value` list, and the parser extracts it with regex. If the response contains a JSON object instead, the parser accepts it as a fallback.
 - **Proxy endpoint**: The demo page routes LLM calls through the Node server (`/v1/proxy/chat/completions`) to avoid CORS issues with local LLM servers.
-- **Probability normalization**: LLM outputs are normalized to sum to 1.0 for each question, fixing any drift from the LLM.
-- **Confidence via entropy**: Confidence is derived from the entropy of the probability distribution, not from the LLM's self-assessment.
+- **Probability normalization**: LLM outputs are clamped at 0 and normalized to sum to 1.0 for each question, fixing any drift from the LLM. Before returning, probabilities are rounded to 2 decimals with a largest-remainder method so they still sum to exactly 1, matching how Jev reports them.
+- **Confidence via peak rescaling**: Confidence is `clamp01((n * max_probability - 1) / (n - 1))` computed on full-precision probabilities — Jev's documented formula — not an entropy measure and not an LLM self-assessment.
+- **Question ids stay client-side**: Questions are labeled `q0`, `q1`, ... in the prompt, so the model never sees caller-defined ids (Jev behaves the same way). The parser maps aliases back through `buildAliasMap`.
+- **Legend passthrough**: Score legends are built from the criteria as given. String levels stay strings; object/array levels stay structured objects, exactly as Jev returns them.
+- **Validation limits**: Choice accepts 1-255 options and Score 2-10 levels, per TypeSafe's documented limits; violations are rejected with HTTP 422.
+- **TypeSafe-shaped model list**: `GET /v1/models` returns `{ models: [{ name, description, release_date }] }`, the documented Jev shape, rather than the OpenAI `{ data: [...] }` shape.
 
 ## Integration Points
 
@@ -83,7 +87,7 @@ The proxy accepts optional headers to override server-side config:
 |--------|------|---------|
 | `GET` | `/` | Demo page (static HTML) |
 | `GET` | `/health` | Health check |
-| `GET` | `/v1/models` | List configured model |
+| `GET` | `/v1/models` | List configured model in TypeSafe's `{ models: [{ name, description, release_date }] }` shape |
 | `POST` | `/v1/systemone` | Main evaluation endpoint |
 | `POST` | `/v1/proxy/chat/completions` | LLM proxy (used by demo page) |
 

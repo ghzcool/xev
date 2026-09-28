@@ -24,16 +24,19 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "xev" });
 });
 
-// Models endpoint (for compatibility)
+// Models endpoint - TypeSafe-compatible shape: { models: [{ name, description, release_date }] }
+// release_date is the date this xev deployment started serving the model; the
+// backend model's own release date is not knowable from an OpenAI-compatible API.
+const SERVING_SINCE = new Date().toISOString().slice(0, 10);
+
 app.get("/v1/models", (_req, res) => {
   const config = getConfig();
   res.json({
-    data: [
+    models: [
       {
-        id: config.model,
-        object: "model",
-        created: Math.floor(Date.now() / 1000),
-        owned_by: "xev",
+        name: config.model,
+        description: "Model configured for xev via LLM_MODEL",
+        release_date: SERVING_SINCE,
       },
     ],
   });

@@ -121,3 +121,43 @@ Each decision entry:
 **Consequence:** Confidence is always between 0 and 1. It is a rescaled max probability, not an entropy measure, so it is sensitive to the winner's margin rather than the whole spread. Future question types must produce probability distributions to be compatible.
 
 **Supersedes:** the earlier entropy-based decision (`1 - normalized_entropy`), which produced systematically lower values than Jev (e.g. 0.49 vs 0.73 for `[0.1, 0.8, 0.05, 0.05]`).
+
+### Probabilities Reported at 2 Decimals
+
+**Date:** 2026-09-28
+**Context:** Jev's published responses show probabilities with two decimal places (e.g. `0.67`, `0.84`), including examples where the reported values still sum to exactly 1 while full-precision values would not.
+**Decision:** Compute confidence on the full-precision distribution, then round the reported probabilities to 2 decimals with a largest-remainder pass so the rounded values still sum to 1.00. Scores are rounded to 2 decimals as well; noul is clamped to [0, 1] and rounded to 2 decimals.
+**Rationale:** Matches Jev's output exactly, avoids `0.6666666666666666` in JSON, and keeps the invariant that probabilities sum to 1. Rounding after confidence avoids drift (e.g. `0.86` with 4 options gives confidence `0.81` from full precision).
+**Consequence:** Clients doing `JSON.stringify` on our response see the same numbers Jev sends. Do not round before computing confidence. If a caller needs more precision, they must use the full distribution themselves — we do not store it.
+
+### No Question Ids Sent to the Model
+
+**Date:** 2026-09-28
+**Context:** Jev's docs state that "the model never sees the question id". Our prompt originally used the caller's question keys (`department`, `is_urgent`, ...) as template keys, leaking potentially sensitive ids into the LLM context.
+**Decision:** Bind questions positionally as `q0`, `q1`, ... in the prompt and response template (`bindQuestions`/`buildAliasMap` in `prompt.ts`), and map them back to the caller's ids in the parser.
+**Rationale:** Parity with Jev's privacy guarantee, and removes a source of prompt drift (weird ids, long ids, ids containing template syntax).
+**Consequence:** `prompt.ts` owns alias generation; `parser.ts` imports `buildAliasMap`. Any code that inspects the raw prompt must expect `qN` keys. The JSON fallback path parses `qN` keys, not caller ids.
+
+### Legend Passthrough
+
+**Date:** 2026-09-28
+**Context:** Jev returns `legend` for Score questions as the structured criteria the caller supplied, including object levels such as `{"what": "Cosmetic", "examples": ["typo"]}`. We had been serializing everything to JSON strings.
+**Decision:** Build `legend` from `criteria` verbatim: string levels stay strings, object/array levels stay structured values (`Description` type in `types.ts`).
+**Rationale:** Parity with Jev, and keeps the response machine-readable without a decode step on the client.
+**Consequence:** `legend` is typed as `Record<string, Description>` where `Description = string | Record<string, unknown> | unknown[]`. Do not `JSON.stringify` levels. Demo UI uses `legendLabel()` to render object levels.
+
+### TypeSafe Validation Limits
+
+**Date:** 2026-09-28
+**Context:** TypeSafe documents limits on question size (Choice up to 255 options, Score 2-10 levels) and rejects violations with HTTP 422. Our schema accepted any number of options/levels.
+**Decision:** Enforce the documented bounds in `validate.ts` (Zod `.max(255)` on choice criteria keys, level count 2-10 for score) and return HTTP 422 with `{ error, details }`.
+**Rationale:** Parity with Jev's error behavior; oversized questions blow up prompt size and degrade model quality anyway.
+**Consequence:** Clients relying on unlimited options must split questions. Future type additions should copy the documented TypeSafe limits into the Zod schema and the error status code.
+
+### TypeSafe-Shaped /v1/models
+
+**Date:** 2026-09-28
+**Context:** Jev documents `GET /v1/models` as `{ models: [{ name, description, release_date }] }` with `release_date` required, not OpenAI's `{ data: [{ id, ... }] }`.
+**Decision:** Return `{ models: [{ name, description, release_date }] }` with `release_date` set to the server's serving date (`SERVING_SINCE`).
+**Rationale:** Clients written against Jev's documented shape parse our response without changes.
+**Consequence:** Do not switch back to the OpenAI `data` shape. If a client needs OpenAI-style discovery, add a separate route rather than changing this one.

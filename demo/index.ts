@@ -84,6 +84,10 @@ function postJson(url, body) {
   });
 }
 
+function legendLabel(level) {
+  return typeof level === "string" ? level : JSON.stringify(level);
+}
+
 function printAnswer(id, answer) {
   if (answer.type === "choice") {
     const top = Object.entries(answer.probabilities)
@@ -95,7 +99,7 @@ function printAnswer(id, answer) {
   } else if (answer.type === "score") {
     const top = Object.entries(answer.probabilities)
       .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `${answer.legend[k]}: ${(v * 100).toFixed(0)}%`)
+      .map(([k, v]) => `${legendLabel(answer.legend[k])}: ${(v * 100).toFixed(0)}%`)
       .join(", ");
     console.log(`  [score]   ${id} => ${answer.score.toFixed(2)} (confidence: ${answer.confidence.toFixed(2)})`);
     console.log(`            top: ${top}`);

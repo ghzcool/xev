@@ -4,6 +4,37 @@ import type {
   Placeholder,
 } from "./types";
 
+// One entry per question, in request order. `alias` is what the prompt and the
+// response template use instead of the caller's question id: Jev never sends
+// question ids to the model, so neither does xev.
+export interface QuestionBinding {
+  alias: string;
+  questionId: string;
+  question: Question;
+}
+
+export function bindQuestions(
+  questions: Record<string, Question>
+): QuestionBinding[] {
+  return Object.entries(questions).map(([questionId, question], index) => ({
+    alias: `q${index}`,
+    questionId,
+    question,
+  }));
+}
+
+// Maps template key ("q0") back to the caller's question id, for the JSON
+// fallback where the model answers with the template filled in.
+export function buildAliasMap(
+  questions: Record<string, Question>
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const binding of bindQuestions(questions)) {
+    map.set(binding.alias, binding.questionId);
+  }
+  return map;
+}
+
 function serializeInstructions(instructions: Instructions): string {
   if (typeof instructions === "string") return instructions;
   return JSON.stringify(instructions, null, 2);
@@ -34,9 +65,10 @@ function serializeCriteria(
   return "";
 }
 
-function questionToPrompt(id: string, q: Question): string {
+function questionToPrompt(binding: QuestionBinding): string {
+  const q = binding.question;
   const instructions = serializeInstructions(q.instructions);
-  let prompt = `Question ID: "${id}"\nType: ${q.type}\nInstructions: ${instructions}`;
+  let prompt = `Question ${binding.alias}\nType: ${q.type}\nInstructions: ${instructions}`;
 
   if (q.type === "choice") {
     prompt += `\nOptions:\n${serializeCriteria("choice", q.criteria)}`;
@@ -79,21 +111,42 @@ export function buildPlaceholderMap(
   return map;
 }
 
-function buildTemplate(map: Placeholder[]): string {
-  const template: Record<string, Record<string, unknown>> = {};
-  for (const [index, placeholder] of map.entries()) {
-    const value = "${" + index + "}";
+function buildTemplate(
+  bindings: QuestionBinding[],
+  questions: Record<string, Question>
+): string {
+  const map = buildPlaceholderMap(questions);
+
+  // Group the flat placeholder list per question, keeping global indices.
+  const groups: { questionId: string; entries: { key: string; index: number }[]; noul?: number }[] = [];
+  map.forEach((placeholder, index) => {
+    let group = groups[groups.length - 1];
+    if (!group || group.questionId !== placeholder.questionId) {
+      group = { questionId: placeholder.questionId, entries: [] };
+      groups.push(group);
+    }
     if (placeholder.field === "noul") {
-      template[placeholder.questionId] = { noul: value };
-      continue;
+      group.noul = index;
+      return;
     }
-    if (!template[placeholder.questionId]) {
-      template[placeholder.questionId] = { probabilities: {} };
+    group.entries.push({ key: placeholder.key, index });
+  });
+
+  const template: Record<string, Record<string, unknown>> = {};
+  bindings.forEach((binding, i) => {
+    const group = groups[i];
+    if (!group) return;
+    if (binding.question.type === "noul") {
+      template[binding.alias] = { noul: "${" + (group.noul ?? 0) + "}" };
+      return;
     }
-    (template[placeholder.questionId].probabilities as Record<string, unknown>)[
-      placeholder.key
-    ] = value;
-  }
+    const probabilities: Record<string, unknown> = {};
+    for (const entry of group.entries) {
+      probabilities[entry.key] = "${" + entry.index + "}";
+    }
+    template[binding.alias] = { probabilities };
+  });
+
   // Unquote the `${index}` tokens so they read as placeholders, not JSON strings
   return JSON.stringify(template, null, 2).replace(/"(\$\{\d+\})"/g, "$1");
 }
@@ -105,11 +158,13 @@ export function buildPrompt(
   const stateStr =
     typeof state === "string" ? state : JSON.stringify(state, null, 2);
 
-  const questionPrompts = Object.entries(questions)
-    .map(([id, q]) => questionToPrompt(id, q))
+  const bindings = bindQuestions(questions);
+
+  const questionPrompts = bindings
+    .map((binding) => questionToPrompt(binding))
     .join("\n\n---\n\n");
 
-  const template = buildTemplate(buildPlaceholderMap(questions));
+  const template = buildTemplate(bindings, questions);
 
   return `You are a precise evaluation engine. Evaluate the STATE against each QUESTION.
 
@@ -121,6 +176,7 @@ RULES:
 5. For Choice and Score questions, the values of that question MUST sum to exactly 1.0.
 6. For Noul questions, the value is a single number between 0.0 (definitely no) and 1.0 (definitely yes).
 7. Be precise. Do not split probability evenly unless truly uncertain.
+8. The keys q0, q1, ... in the RESPONSE TEMPLATE are the questions listed above, in order: q0 is the first question, q1 the second, and so on.
 
 STATE:
 ${stateStr}

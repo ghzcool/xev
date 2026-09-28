@@ -87,8 +87,8 @@ Send state and typed questions, get structured answers.
     "department": {
       "type": "choice",
       "choice": "technical",
-      "confidence": 0.81,
-      "probabilities": { "technical": 0.85, "sales": 0.0, "billing": 0.15 }
+      "probabilities": { "technical": 0.85, "sales": 0.0, "billing": 0.15 },
+      "confidence": 0.78
     },
     "is_urgent": {
       "type": "noul",
@@ -97,9 +97,9 @@ Send state and typed questions, get structured answers.
     "frustration": {
       "type": "score",
       "score": 1.05,
-      "confidence": 0.92,
       "legend": { "0": "Calm", "1": "Frustrated", "2": "Very angry" },
-      "probabilities": { "0": 0.0, "1": 0.95, "2": 0.05 }
+      "probabilities": { "0": 0.0, "1": 0.95, "2": 0.05 },
+      "confidence": 0.93
     }
   },
   "usage": { "input_tokens": 392, "output_tokens": 65 }
@@ -109,6 +109,21 @@ Send state and typed questions, get structured answers.
 ### `GET /health`
 
 Returns `{ "status": "ok", "service": "xev" }`.
+
+### `GET /v1/models`
+
+Returns the configured model in TypeSafe's documented shape:
+
+```json
+{ "models": [{ "name": "qwen/qwen3.5-9b", "description": "Model configured for xev via LLM_MODEL", "release_date": "2026-09-28" }] }
+```
+
+### Limits
+
+- Choice: 1-255 options; Score: 2-10 levels. Violations are rejected with HTTP 422.
+- Probabilities are reported with 2 decimals and always sum to 1.
+- `confidence` = `clamp01((n * max_probability - 1) / (n - 1))`, computed on full-precision probabilities — Jev's formula.
+- Score `legend` is returned as the criteria you sent: strings stay strings, object/array levels stay structured.
 
 ### `POST /v1/proxy/chat/completions`
 
@@ -141,9 +156,9 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## How It Works
 
 1. Receives a TypeSafe-compatible request with state + questions
-2. Builds a prompt with a response template whose values are indexed placeholders (`${0}`, `${1}`, ...)
+2. Builds a prompt with a response template whose values are indexed placeholders (`${0}`, `${1}`, ...); questions are labeled `q0`, `q1`, ... so your question ids never reach the model
 3. LLM answers with a `;`-separated `index:value` list, e.g. `0:0.1;1:0.234;2:0;3:1` (filled-in JSON is accepted as a fallback)
-4. Parser maps each index back to its question, coerces strings to numbers, normalizes probabilities, computes confidence
+4. Parser maps each index back to its question, coerces strings to numbers, clamps and normalizes probabilities, computes confidence, then rounds reported probabilities to 2 decimals so they still sum to 1
 5. Returns a TypeSafe-compatible response
 
 ## License
