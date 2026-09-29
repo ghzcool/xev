@@ -1,4 +1,3 @@
-import type { Request } from "express";
 import type { LLMClientConfig, LLMReasoningConfig, ReasoningEffort } from "./llm";
 
 // Defaults match .env.example and the demo page, so a server started with no
@@ -157,7 +156,18 @@ export function getConfig(): ServerConfig {
   };
 }
 
-function header(req: Request, name: string): string | undefined {
+/**
+ * Anything that carries HTTP-style headers. An express `Request` satisfies this
+ * structurally, and so does a plain `{ headers }` object, which is what the MCP
+ * server and tests pass: connection overrides are a transport concern, not an
+ * express one, and the credential guard must not be bypassable by reaching for a
+ * different caller.
+ */
+export interface HeaderSource {
+  headers: Record<string, string | string[] | undefined>;
+}
+
+function header(req: HeaderSource, name: string): string | undefined {
   const value = req.headers[name];
   if (Array.isArray(value)) return value[0]?.trim() || undefined;
   return typeof value === "string" && value.trim() !== ""
@@ -183,7 +193,7 @@ export function isTypeSafeAlias(model: string | undefined): boolean {
  * whatever host the caller named.
  */
 export function resolveLLMConfig(
-  req: Request,
+  req: HeaderSource,
   config: ServerConfig,
   bodyModel?: string,
   placeholderCount = 0

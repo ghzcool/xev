@@ -8,14 +8,85 @@ Xev is an HTTP server that translates TypeSafe's System One API format into LLM 
 
 A demo page is served at the root URL for browser-based testing. The demo proxies LLM calls through the Node server to avoid CORS issues.
 
+Xev also runs as an MCP server, so agent tools (opencode, Claude Desktop, Cursor, and anything else that speaks MCP) can evaluate without an HTTP round trip or a running server.
+
+## Front Doors
+
+There are two, and they share one pipeline:
+
+```
+HTTP client ──POST /v1/systemone──▶ index.ts  ─┐
+                                               ├─▶ evaluate() ─▶ validate → config → prompt → llm → parse
+MCP client ──tools/call xev_evaluate──▶ mcp/ ───┘
+```
+
+`evaluate.ts` owns the pipeline and knows nothing about either transport. The HTTP route is a thin
+adapter that maps an `EvaluateOutcome` to a status code and a body; the MCP tool maps it to a
+`CallToolResult` with a readable digest and the structured response. A caller cannot get different
+behavior, different validation, or different error messages by choosing a door.
+
+`config.ts` is reached from both, and so the credential guard is not bypassable by arriving over
+MCP: an MCP tool call has no header path, so the server's key can only ever go to its configured
+host.
+
+## MCP Server
+
+Started with `npm run mcp` (from source) or `npm run mcp:start` (from `dist/`). It speaks JSON-RPC
+over stdio and is launched as a child process by the client, which configures it entirely through
+the environment it inherits:
+
+```json
+{
+  "mcp": {
+    "xev": {
+      "type": "local",
+      "command": ["node", "/path/to/xev/dist/mcp/index.js"],
+      "environment": { "LLM_BASE_URL": "...", "LLM_MODEL": "...", "LLM_API_KEY": "..." }
+    }
+  }
+}
+```
+
+The same `LLM_*` variables as the HTTP server apply, because both call `getConfig()`. There is no
+MCP-specific configuration.
+
+**Tools:** one, `xev_evaluate`.
+
+| Tool | Input | Output |
+|------|-------|--------|
+| `xev_evaluate` | `state` (required), `questions` (required), `model` (optional) | `SystemOneResponse` |
+
+**Input schema.** `state` is typed exactly as the API contract types it (a string, object, or
+array), which puts it in the published schema's `required` list so strict tool-calling clients
+cannot send a request with no state. `questions` is a `record` of anything: the three question
+shapes are documented in the tool description in prose, and the actual check is `validateRequest`,
+the same one the HTTP endpoint uses. Declaring the question schemas in the JSON Schema as well
+would mean two validators, and zod's union error for a wrong question type is a nested JSON dump
+an agent cannot act on, where xev's own message names the question id and the allowed types.
+
+**Output.** A success returns both a digest and `structuredContent`. The digest is what a calling
+model reads: the chosen option, the runners-up by weight, the level a `score` mostly landed on, the
+`warnings` block when the model did not fully answer, and the token counts. `structuredContent` is
+the full `SystemOneResponse`, re-parsed through `SystemOneResponseSchema` so it always satisfies
+the `outputSchema` the tool advertises - the raw response carries a `reasoning_tokens` counter the
+schema does not declare, and a strict client would reject a payload the server called its own
+contract.
+
+A failure returns `isError: true` with the status in the text and a hint about whether to retry
+(`429`, `5xx`) or fix the request (`422`). Validation failures are returned rather than thrown, so
+the model sees the message and can correct itself in the next turn.
+
+Note that a `score` answer's `score` is the probability-weighted mean of the level indices, not a
+level key, which is why the digest names the argmax level and its legend separately.
+
 ## Request Lifecycle
 
 ```
-Client Request (POST /v1/systemone)
+Request (POST /v1/systemone, or an xev_evaluate tool call)
      │
      ▼
 ┌─────────────┐
-│  validate    │  Zod schema check on request body
+│  validate    │  Zod schema check on the request body / tool arguments
 └─────┬───────┘
       │ valid
       ▼
@@ -39,7 +110,8 @@ Client Request (POST /v1/systemone)
 └─────┬───────┘
       │
       ▼
-Client Response  (plus `warnings` if the answer was incomplete)
+Response  (plus `warnings` if the answer was incomplete)
+         JSON body over HTTP, or a digest + `structuredContent` over MCP
 ```
 
 ## Proxy Flow (Demo Page)
@@ -154,7 +226,10 @@ deployment may be the only client.
 - **TypeSafe-shaped model list**: `GET /v1/models` returns `{ models: [{ name, description, release_date }] }`, the documented Jev shape, rather than the OpenAI `{ data: [...] }` shape.
 - **Incomplete answers are reported, not hidden**: normalization makes a missing value look like a real one, so the parser counts coverage and says so in `warnings`.
 - **Errors are always JSON**: an express error handler keeps body-parser failures and thrown errors inside the `{ error }` contract instead of Express's HTML page with a stack trace.
-- **The server key stays home**: a request cannot redirect the server's credentials to a host it names.
+- **The server key stays home**: a request cannot redirect the server's credentials to a host it names. An MCP tool call has no header path at all, so the server's key can only reach its configured host.
+- **One pipeline, two front doors**: `evaluate.ts` holds the pipeline and takes no transport, so the HTTP route and the MCP tool cannot drift apart in validation, normalization, or error wording. Each front door only maps the outcome to its own response shape.
+- **One validator at the boundary**: the MCP tool's JSON Schema documents the question types in prose and leaves the checking to `validateRequest`. A wrong question type produces xev's readable message rather than zod's union dump, on both doors.
+- **The MCP output is re-parsed before it is sent**: `structuredContent` is validated against the tool's own published `outputSchema` rather than passed through, so a client with strict validation never receives a payload the server called its own contract.
 
 ## Integration Points
 
@@ -162,6 +237,7 @@ deployment may be the only client.
 |--------|----------|---------|
 | OpenAI-compatible LLM | HTTP/HTTPS | Backend for question evaluation |
 | Client applications | HTTP | Accept TypeSafe-format requests |
+| MCP clients (opencode, Claude Desktop, …) | JSON-RPC over stdio | Agent-facing `xev_evaluate` tool |
 | Demo page (browser) | HTTP | Testing UI, served as static files |
 
 ## Endpoints
@@ -186,7 +262,8 @@ text everywhere else, so a URL is always visible and clickable. A wildcard bind 
 is reported as one actionable line rather than an unhandled `EADDRINUSE` crash.
 
 `start()` runs only when `index.ts` is the main module, so `import app from "./index"` in a test
-does not bind a port.
+does not bind a port. The same rule applies to `src/mcp/index.ts`, so a test can import
+`createServer()` without attaching a transport.
 
 ## Adding a New Question Type
 
@@ -194,13 +271,25 @@ does not bind a port.
 2. Add prompt instructions in `prompt.ts` (`questionToPrompt` function)
 3. Add placeholders in `prompt.ts` (`buildPlaceholderMap`, and the shape in `buildTemplate`)
 4. Add parsing logic in `parser.ts` (new parse function, add to `parseResponse`, and report coverage warnings)
-5. Add tests in `src/*.test.ts`
-6. Update this document and `structure.md`
+5. Add a branch to `renderEvaluation` in `mcp/evaluateTool.ts` and document the type in `EVALUATE_TOOL_DESCRIPTION`
+6. Add tests in `src/**/*.test.ts`
+7. Update this document and `structure.md`
+
+Steps 1 to 4 change the pipeline and reach both front doors at once. Step 5 exists because the
+question contract is documented twice on purpose: once as schemas, which the HTTP side and
+`validateRequest` enforce, and once in the MCP tool description, which is the only documentation a
+third-party model gets. A new type that skips step 5 is enforced but not discoverable.
 
 ## Running the Tests
 
-`npm test` runs `tsx --test "src/*.test.ts"`. There is no test framework dependency: `tsx` is
+`npm test` runs `tsx --test "src/**/*.test.ts"`. There is no test framework dependency: `tsx` is
 already a dev dependency and the assertions use `node:test` and `node:assert`. `llm.test.ts`
 starts a throwaway `http` server on an ephemeral port and asserts what the LLM client actually
 sends and how it handles what comes back, which is where OpenRouter header and provider-routing
 behavior is pinned down.
+
+`evaluate.test.ts` and `mcp/index.test.ts` each stand up the same kind of mock LLM. The MCP one
+goes further and connects a real `Client` to `createServer()` over `InMemoryTransport`, so the
+published JSON Schema, the `required` list, the digest, and `structuredContent` are asserted over
+the wire rather than against internals. A change to the tool contract that breaks a third-party
+client fails there first.

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "xev": {
+      "type": "local",
+      "command": ["npx", "tsx", "src/mcp/index.ts"],
+      "enabled": true,
+      "environment": {}
+    }
+  }
+}

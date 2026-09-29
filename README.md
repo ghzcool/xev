@@ -152,6 +152,78 @@ Open `http://localhost:3000` in your browser for a testing UI with:
 
 All values, including saved presets, are saved in localStorage.
 
+## MCP Server
+
+Xev also runs as a [Model Context Protocol](https://modelcontextprotocol.io) server, so agent tools
+(opencode, Claude Desktop, Cursor, and anything else that speaks MCP) can evaluate without writing
+a client. It speaks stdio and runs the evaluation in-process, so **no HTTP server needs to be
+running** — the MCP server is the whole thing.
+
+```bash
+npm run mcp          # from source
+npm run build && npm run mcp:start   # from dist/
+```
+
+Point your client at it. Configuration is the environment it inherits, so it uses the same
+`LLM_*` variables as the HTTP server:
+
+```json
+{
+  "mcp": {
+    "xev": {
+      "type": "local",
+      "command": "node",
+      "args": [
+        "/absolute/path/to/xev/dist/mcp/index.js"
+      ],
+      "environment": {
+        "LLM_BASE_URL": "https://openrouter.ai/api/v1",
+        "LLM_API_KEY": "sk-or-...",
+        "LLM_MODEL": "anthropic/claude-sonnet-4"
+      }
+    }
+  }
+}
+```
+
+For Claude Desktop, the same thing goes in `claude_desktop_config.json` under `mcpServers`.
+
+### The `xev_evaluate` tool
+
+One tool. It takes the same `state` + `questions` as `POST /v1/systemone` and returns the same
+response, so nothing is documented twice:
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `state` | yes | The text or JSON to evaluate. A string, object, or array. |
+| `questions` | yes | Map of question id → question (`choice`, `score`, or `noul`). |
+| `model` | no | Model override for this call; omit to use the configured one. |
+
+Every question in one call is answered in a **single LLM call**, so batch them.
+
+The result carries a readable digest for the agent plus `structuredContent` with the full
+response:
+
+```
+department (choice) => billing
+  confidence 0.85
+  billing 0.80  support 0.15  technical 0.05
+
+is_urgent (noul) => 0.95 — yes
+
+model xev-anthropic/claude-sonnet-4 · 380 tokens in / 21 out
+```
+
+Failures come back as tool errors with the status in the message, so an agent can tell a fixable
+request (`422`) from a retryable one (`429`, `5xx`) without guessing.
+
+The MCP server accepts no per-call connection overrides, so a tool call cannot redirect the
+server's `LLM_API_KEY` anywhere: it can only ever go to the configured host.
+
+This repo ships a skill at [`.opencode/skills/xev-evaluate/SKILL.md`](./.opencode/skills/xev-evaluate/SKILL.md)
+that teaches an agent how to use the tool well, and `opencode.json` already wires the server up for
+opencode.
+
 ## API
 
 ### `POST /v1/systemone`
@@ -303,13 +375,18 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## Development
 
 ```bash
-npm test    # 82 unit tests (node:test, no extra dependencies)
+npm test    # 135 unit tests (node:test, no test framework dependency)
 npm run build
 ```
 
 Tests cover the parser's Jev-parity math (normalization, largest-remainder rounding, confidence
 ordering), prompt/parser placeholder agreement, the validation limits, credential handling, and the
 LLM client's request and response handling against a mock server.
+
+`evaluate.test.ts` runs the pipeline end to end against a mock LLM, and `mcp/index.test.ts` drives
+the MCP server through a real MCP client over an in-memory transport, asserting the published JSON
+Schema and the tool result at the protocol level. Both stand up a throwaway OpenAI-compatible
+server, so neither needs a real model.
 
 ## License
 

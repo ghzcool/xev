@@ -1,9 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "path";
-import { validateRequest } from "./validate";
-import { buildPrompt, buildPlaceholderMap } from "./prompt";
-import { callLLM, llmErrorStatus } from "./llm";
-import { parseResponse, LLMResponseError } from "./parser";
+import { evaluate } from "./evaluate";
 import {
   ConfigError,
   formatBaseUrl,
@@ -151,63 +148,12 @@ app.get("/v1/models", async (_req, res) => {
 
 // Main evaluation endpoint - mirrors TypeSafe API
 app.post("/v1/systemone", async (req, res) => {
-  const serverCfg = getConfig();
-
-  const validation = validateRequest(req.body);
-  if (!validation.success) {
-    res.status(validation.error.status).json({
-      error: validation.error.error,
-      details: validation.error.details,
-    });
+  const outcome = await evaluate(req.body, { headers: req.headers });
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error, details: outcome.details });
     return;
   }
-
-  const { state, model, questions } = validation.data;
-
-  try {
-    const llmConfig = resolveLLMConfig(
-      req,
-      serverCfg,
-      model,
-      buildPlaceholderMap(questions).length
-    );
-    const prompt = buildPrompt(state, questions);
-    const result = await callLLM(prompt, llmConfig);
-
-    const transportWarnings: string[] = [];
-    if (result.hadReasoning) {
-      transportWarnings.push(
-        `the model returned a thinking trace alongside its answer (${result.usage.reasoning_tokens} reasoning tokens); check the values`
-      );
-    }
-    if (result.truncated) {
-      transportWarnings.push(
-        "the model's answer was cut off (finish_reason: length); some values are missing"
-      );
-    }
-
-    const response = parseResponse(
-      questions,
-      result.content,
-      llmConfig.model,
-      result.usage,
-      { warnings: transportWarnings }
-    );
-
-    res.json(response);
-  } catch (err: unknown) {
-    if (err instanceof ConfigError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    // The caller's request was valid; the model or the upstream server failed.
-    const status = err instanceof LLMResponseError ? 502 : llmErrorStatus(err);
-    console.error(`Evaluation error (${status}):`, message);
-    res.status(status).json({
-      error: status === 504 ? `LLM request timed out: ${message}` : `Evaluation failed: ${message}`,
-    });
-  }
+  res.json(outcome.response);
 });
 
 // Proxy endpoint for chat completions (avoids CORS issues from browser)
