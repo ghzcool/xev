@@ -40,7 +40,10 @@ Xev is running
 
 ## Configuration
 
-Set environment variables in `.env`:
+Set environment variables in `.env`. The server and the MCP server read that file on startup, and
+any variable already exported in the environment wins over the file, so a one-off
+`LLM_MODEL=... npm start` still works. Reading `.env` needs Node 20.12 or newer; on anything older
+xev warns once and uses the exported environment only. Requires Node 20.12+.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -325,7 +328,9 @@ unreachable.
 
 ### `POST /v1/proxy/chat/completions`
 
-Proxies chat completion requests to the configured LLM. Used by the demo page to avoid CORS issues. Accepts optional headers:
+Proxies chat completion requests to the configured LLM. Used by the demo page to avoid CORS issues. The server's
+reasoning settings (`LLM_REASONING_EFFORT`, `LLM_EXTRA_BODY`) are applied to the forwarded body unless the body sets
+those keys itself. Accepts optional headers:
 - `x-llm-base-url` - override `LLM_BASE_URL`
 - `x-llm-api-key` - override `LLM_API_KEY`
 
@@ -397,7 +402,7 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## Development
 
 ```bash
-npm test    # 135 unit tests (node:test, no test framework dependency)
+npm test    # 159 unit tests (node:test, no test framework dependency)
 npm run build
 ```
 

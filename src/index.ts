@@ -7,10 +7,15 @@ import {
   getConfig,
   hyperlink,
   isOpenRouter,
+  loadEnvFile,
   normalizeBaseUrl,
   resolveLLMConfig,
   type ServerConfig,
 } from "./config";
+
+// Before anything reads process.env. An exported variable still wins over the
+// file, so this only fills in what the operator did not export.
+loadEnvFile();
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -160,6 +165,22 @@ app.post("/v1/systemone", async (req, res) => {
 app.post("/v1/proxy/chat/completions", async (req, res) => {
   try {
     const llmConfig = resolveLLMConfig(req, getConfig());
+    // The caller's body goes out as it arrived, with the server's reasoning
+    // settings behind it: this route used to resolve them and then send the body
+    // untouched, so a request through the proxy ignored LLM_REASONING_EFFORT
+    // while the same request to /v1/systemone honored it. The caller's own keys
+    // are last, so a body that sets them itself still decides.
+    const reasoning: Record<string, unknown> = {};
+    if (llmConfig.reasoning) {
+      reasoning.exclude = llmConfig.reasoning.exclude;
+      if (llmConfig.reasoning.effort) reasoning.effort = llmConfig.reasoning.effort;
+      if (llmConfig.reasoning.maxTokens) reasoning.max_tokens = llmConfig.reasoning.maxTokens;
+    }
+    const forwarded = {
+      ...(Object.keys(reasoning).length > 0 ? { reasoning } : {}),
+      ...llmConfig.extraBody,
+      ...req.body,
+    };
     const response = await fetch(`${normalizeBaseUrl(llmConfig.baseURL)}/chat/completions`, {
       method: "POST",
       headers: {
@@ -168,7 +189,7 @@ app.post("/v1/proxy/chat/completions", async (req, res) => {
         ...(llmConfig.referer ? { "HTTP-Referer": llmConfig.referer } : {}),
         ...(llmConfig.title ? { "X-Title": llmConfig.title } : {}),
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(forwarded),
     });
 
     const data = await response.text();

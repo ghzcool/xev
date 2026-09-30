@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Request } from "express";
 import {
   ConfigError,
@@ -8,11 +11,13 @@ import {
   hyperlink,
   isOpenRouter,
   isTypeSafeAlias,
+  loadEnvFile,
   maxTokensFor,
   normalizeBaseUrl,
   resolveLLMConfig,
   type ServerConfig,
 } from "./config";
+import { defaultEnvPath } from "./config";
 
 function req(headers: Record<string, string> = {}): Request {
   return { headers } as unknown as Request;
@@ -334,6 +339,35 @@ test("OpenRouter keeps the reasoning dialect and gains no extra body key", () =>
   );
   assert.deepEqual(config.reasoning, { exclude: true, effort: "none" });
   assert.equal(config.extraBody, undefined);
+});
+
+// ── Reading .env ─────────────────────────────────────────────────────────────
+
+test("loadEnvFile fills in variables that are not already set", () => {
+  const file = join(tmpdir(), `xev-env-${process.pid}.env`);
+  writeFileSync(file, "XEV_ENV_ONLY=from_file\nXEV_ENV_BOTH=from_file\n");
+  try {
+    process.env.XEV_ENV_BOTH = "from_env";
+    assert.equal(loadEnvFile(file), true);
+    assert.equal(process.env.XEV_ENV_ONLY, "from_file");
+    // An exported variable wins over the file, as with any dotenv loader.
+    assert.equal(process.env.XEV_ENV_BOTH, "from_env");
+  } finally {
+    delete process.env.XEV_ENV_ONLY;
+    delete process.env.XEV_ENV_BOTH;
+    rmSync(file, { force: true });
+  }
+});
+
+test("a missing .env is not an error", () => {
+  assert.equal(loadEnvFile(join(tmpdir(), "xev-env-does-not-exist.env")), false);
+});
+
+test("the repo .env is the one the entry points read", () => {
+  // Resolved next to the sources, not the working directory: an MCP client may
+  // launch xev from anywhere. `src/config.ts` and `dist/config.js` both sit one
+  // level below the root.
+  assert.equal(defaultEnvPath(), join(__dirname, "..", ".env"));
 });
 
 // ── Token cap ───────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { LLMClientConfig, LLMReasoningConfig, ReasoningEffort } from "./llm";
 
 // Defaults match .env.example and the demo page, so a server started with no
@@ -49,6 +51,47 @@ export class ConfigError extends Error {
     this.name = "ConfigError";
     this.status = status;
   }
+}
+
+/**
+ * Reads `.env` into `process.env` for every variable that is not already set, so
+ * an exported variable still wins over the file.
+ *
+ * `.env.example` and the README both tell operators to put their `LLM_*` settings
+ * in that file. Nothing used to read it, which made every setting in it inert:
+ * the server ran on its built-in defaults and a reasoning setting that looked
+ * configured was silently ignored. This is called by the entry points rather than
+ * at import, so importing `config.ts` (tests included) never reads a file.
+ *
+ * Returns whether anything was read. A missing file is not an error: the
+ * documented way to run xev is with the environment set, and with `.env` absent
+ * the defaults are what the operator wants.
+ */
+export function loadEnvFile(file = defaultEnvPath()): boolean {
+  if (typeof process.loadEnvFile !== "function") {
+    console.warn(
+      "This Node version cannot read .env (needs 20.12 or newer): set the LLM_* variables in the environment instead"
+    );
+    return false;
+  }
+  if (!existsSync(file)) return false;
+  try {
+    process.loadEnvFile(file);
+    return true;
+  } catch (err) {
+    console.warn(
+      `Could not read ${file}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * `.env` sits next to the sources, so it is found relative to this module rather
+ * than the working directory: an MCP client may launch xev from anywhere.
+ */
+export function defaultEnvPath(): string {
+  return join(__dirname, "..", ".env");
 }
 
 function envInt(name: string, fallback: number): number {

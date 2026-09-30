@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { getConfig } from "../config";
+import { getConfig, loadEnvFile } from "../config";
 import { SystemOneResponseSchema } from "../types";
 import {
   EVALUATE_INPUT_SHAPE,
@@ -12,6 +12,10 @@ import {
   runEvaluate,
   type ToolResult,
 } from "./evaluateTool";
+
+// An MCP client configures xev through its own environment block, which usually
+// means no shell to export from, so `.env` is the file an operator reaches for.
+loadEnvFile();
 
 export const SERVER_NAME = "xev";
 export const SERVER_VERSION = "1.0.0";

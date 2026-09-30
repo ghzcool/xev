@@ -147,6 +147,11 @@ This is demo-only: the server has no preset storage and no preset endpoints.
 `config.ts` is the only place that decides which LLM a request talks to. Priority is
 `x-llm-*` header → request body's `model` (unless a `jev*` alias) → `LLM_MODEL`.
 
+The server and MCP entry points read `.env` before anything looks at the environment, so the file
+both `.env.example` and this document point operators at is not inert. An already-exported
+variable wins over the file. This needs Node 20.12 (`process.loadEnvFile`); `package.json` declares
+it in `engines`, and `loadEnvFile` warns once and continues on an older Node rather than failing.
+
 **Credential guard:** the server's `LLM_API_KEY` is only ever sent to the base URL from
 `LLM_BASE_URL`. A request that sets `x-llm-base-url` to any other host must also set
 `x-llm-api-key`; otherwise the request is rejected with 400. Without this, anyone able to reach
