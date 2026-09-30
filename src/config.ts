@@ -33,6 +33,10 @@ export interface ServerConfig {
   allowFallbacks: boolean | undefined;
   dataCollection: "allow" | "deny" | undefined;
   reasoning: LLMReasoningConfig;
+  // Merged into the request body last. Holds the standard `reasoning_effort` a
+  // non-router backend needs, plus anything the operator wants to pass through.
+  // Omitted unless set, since a server that rejects the key would 400.
+  extraBody?: Record<string, unknown>;
   discoverModels: boolean;
   corsOrigins: string[];
   rateLimitRpm: number;
@@ -65,6 +69,26 @@ function envBool(name: string): boolean | undefined {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return undefined;
   return raw.trim().toLowerCase() === "true";
+}
+
+/**
+ * A JSON object passed straight through to the backend. Unset and blank input
+ * is simply absent; anything unparseable is reported once at startup and
+ * ignored rather than silently becoming `{}`, which would read as "the
+ * operator asked for nothing here".
+ */
+function parseJSONObject(source: string, raw: string): Record<string, unknown> | undefined {
+  if (raw.trim() === "") return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("not a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    console.warn(`Ignoring ${source}: expected a JSON object, got "${raw}"`);
+    return undefined;
+  }
 }
 
 export function normalizeBaseUrl(url: string): string {
@@ -107,6 +131,16 @@ export function isOpenRouter(baseURL: string): boolean {
   return /(^|\.)openrouter\.ai$/i.test(safeHost(baseURL));
 }
 
+// Both dialects can say "the model will not think": the standard
+// `reasoning_effort`, and vLLM's chat template switch. The operator's own
+// `LLM_EXTRA_BODY` counts too, since it is merged over what xev derived.
+function thinkingIsOff(body: Record<string, unknown> | undefined): boolean {
+  if (!body) return false;
+  if (body.reasoning_effort === "none") return true;
+  const kwargs = body.chat_template_kwargs as { enable_thinking?: unknown } | undefined;
+  return kwargs?.enable_thinking === false;
+}
+
 function safeHost(url: string): string {
   try {
     return new URL(normalizeBaseUrl(url)).hostname;
@@ -124,6 +158,7 @@ export function getConfig(): ServerConfig {
       `Ignoring LLM_REASONING_EFFORT="${effort}": expected one of ${REASONING_EFFORTS.join(", ")}`
     );
   }
+  const extraBody = parseJSONObject("LLM_EXTRA_BODY", process.env.LLM_EXTRA_BODY?.trim() || "");
 
   return {
     baseURL,
@@ -149,6 +184,8 @@ export function getConfig(): ServerConfig {
         ? { maxTokens: envInt("LLM_REASONING_MAX_TOKENS", 0) }
         : {}),
     },
+    ...(extraBody ? { extraBody } : {}),
+
     // Routers like OpenRouter expose a catalog; a fixed base URL does not.
     discoverModels: discoverFlag ?? isOpenRouter(baseURL),
     corsOrigins: envList("CORS_ORIGIN"),
@@ -220,6 +257,7 @@ export function resolveLLMConfig(
   const effort = header(req, "x-llm-reasoning-effort");
   const reasoningMax = header(req, "x-llm-reasoning-max-tokens");
   const excludeReasoning = header(req, "x-llm-reasoning-exclude");
+  const extraBodyHeader = header(req, "x-llm-extra-body");
 
   if (dataCollection && dataCollection !== "allow" && dataCollection !== "deny") {
     throw new ConfigError(
@@ -262,8 +300,16 @@ export function resolveLLMConfig(
   const collection = dataCollection || config.dataCollection;
   if (collection) resolved.dataCollection = collection as "allow" | "deny";
 
-  // Reasoning is requested only for routers that implement it. A plain
-  // OpenAI-compatible server has never heard of the parameter.
+  // Reasoning comes in two dialects. OpenRouter puts it in a `reasoning`
+  // object; every other OpenAI-compatible server speaks the standard top-level
+  // `reasoning_effort`, which LM Studio and SGLang implement directly and vLLM
+  // translates into the chat template's own `enable_thinking`. Only the disable
+  // direction is derived, so "none" is honoured everywhere while a backend with
+  // no notion of "a little thinking" is never handed a level it would reject:
+  // LM Studio answers `reasoning_effort: "low"` with a 400, where sending
+  // nothing keeps the request working.
+  const effectiveEffort = (effort || config.reasoning.effort) as ReasoningEffort | undefined;
+
   if (openRouter) {
     const reasoning: LLMReasoningConfig = {
       ...config.reasoning,
@@ -279,14 +325,31 @@ export function resolveLLMConfig(
     if (Object.keys(reasoning).length > 0) resolved.reasoning = reasoning;
   }
 
+  // The operator's own keys go last, so they can override what xev derived.
+  const extra =
+    extraBodyHeader !== undefined
+      ? parseJSONObject("x-llm-extra-body", extraBodyHeader)
+      : config.extraBody;
+  const derived = !openRouter && effectiveEffort === "none" ? { reasoning_effort: "none" } : {};
+  const extraBody = { ...derived, ...extra };
+  if (Object.keys(extraBody).length > 0) resolved.extraBody = extraBody;
+
   const tokenCap = maxTokens ? Number.parseInt(maxTokens, 10) : config.maxTokens;
-  const answerBudget =
-    Number.isFinite(tokenCap) && tokenCap > 0 ? tokenCap : maxTokensFor(placeholderCount);
-  // Leave the reasoning room it needs, or a thinking model never reaches the
-  // answer list at all.
-  resolved.maxTokens = resolved.reasoning
-    ? answerBudget + (resolved.reasoning.maxTokens ?? REASONING_RESERVE_TOKENS)
-    : answerBudget;
+  const explicitCap = Number.isFinite(tokenCap) && tokenCap > 0;
+  const answerBudget = explicitCap ? tokenCap : maxTokensFor(placeholderCount);
+  // A thinking model spends from the same budget and answers nothing until it is
+  // done, so reserve room unless thinking was switched off. The reserve goes to
+  // every backend, not only the ones xev can ask for reasoning controls on: a
+  // local Qwen3 keeps thinking whatever xev sends, and a budget with no room for
+  // it is a guaranteed `finish_reason: length` with no answer. Widening an upper
+  // bound costs a model that does not think nothing. An explicit LLM_MAX_TOKENS
+  // is documented as the cap on the answer, so it is honored as given: whoever
+  // set it has already decided what the model may spend, and it is the way out
+  // for a backend whose thinking does not fit the default reserve.
+  resolved.maxTokens =
+    explicitCap || thinkingIsOff(resolved.extraBody)
+      ? answerBudget
+      : answerBudget + (resolved.reasoning?.maxTokens ?? REASONING_RESERVE_TOKENS);
 
   return resolved;
 }

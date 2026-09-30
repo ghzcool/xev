@@ -205,18 +205,151 @@ test("an invalid reasoning effort is rejected", () => {
 test("reasoning is not sent to plain OpenAI-compatible servers", () => {
   const config = resolveLLMConfig(req(), BASE, undefined, 3);
   assert.equal(config.reasoning, undefined);
+  assert.equal(config.extraBody, undefined);
+  // The reserve is not router-specific: a local Qwen3 thinks whatever xev sends.
+  assert.equal(config.maxTokens, maxTokensFor(3) + 1024);
+});
+
+test("no reserve is left for thinking that was switched off", () => {
+  const config = resolveLLMConfig(
+    req({ "x-llm-extra-body": '{"reasoning_effort":"none"}' }),
+    BASE,
+    undefined,
+    3
+  );
   assert.equal(config.maxTokens, maxTokensFor(3));
+});
+
+test("the vLLM chat template switch counts as thinking, both ways", () => {
+  const off = resolveLLMConfig(
+    req({ "x-llm-extra-body": '{"chat_template_kwargs":{"enable_thinking":false}}' }),
+    BASE,
+    undefined,
+    2
+  );
+  assert.equal(off.maxTokens, maxTokensFor(2), "nothing is coming, so no reserve");
+  const on = resolveLLMConfig(
+    req({ "x-llm-extra-body": '{"chat_template_kwargs":{"enable_thinking":true}}' }),
+    BASE,
+    undefined,
+    2
+  );
+  assert.equal(on.maxTokens, maxTokensFor(2) + 1024, "thinking needs room to finish");
+});
+
+test("thinking that is explicitly requested widens the answer budget", () => {
+  const config = resolveLLMConfig(req({ "x-llm-extra-body": '{"reasoning_effort":"high"}' }), BASE, undefined, 2);
+  assert.equal(config.maxTokens, maxTokensFor(2) + 1024);
+});
+
+test("LLM_REASONING_EFFORT=none switches thinking off on a local backend", () => {
+  // The bug this exists for: a Qwen3 model on LM Studio or vLLM reads the
+  // standard `reasoning_effort`, not OpenRouter's `reasoning` object, so "none"
+  // used to be accepted and then silently dropped.
+  process.env.LLM_REASONING_EFFORT = "none";
+  try {
+    const config = getConfig();
+    const resolved = resolveLLMConfig(req(), config, undefined, 2);
+    assert.deepEqual(resolved.extraBody, { reasoning_effort: "none" });
+    // Nothing is going to be spent thinking, so the budget is the answer alone.
+    assert.equal(resolved.maxTokens, maxTokensFor(2));
+  } finally {
+    delete process.env.LLM_REASONING_EFFORT;
+  }
+});
+
+test("an effort the backend may reject is not sent", () => {
+  // LM Studio answers `reasoning_effort: "low"` with a 400, where sending
+  // nothing keeps the request working. Only the disable direction is derived.
+  const config = resolveLLMConfig(req({ "x-llm-reasoning-effort": "low" }), BASE, undefined, 2);
+  assert.equal(config.extraBody, undefined);
+  assert.equal(config.maxTokens, maxTokensFor(2) + 1024);
+});
+
+test("the effort header switches thinking off on a local backend", () => {
+  const config = resolveLLMConfig(
+    req({ "x-llm-reasoning-effort": "none" }),
+    BASE,
+    undefined,
+    2
+  );
+  assert.deepEqual(config.extraBody, { reasoning_effort: "none" });
+});
+
+test("an effort header overrides a low env effort", () => {
+  const configured: ServerConfig = { ...BASE, reasoning: { exclude: true, effort: "low" } };
+  const off = resolveLLMConfig(req({ "x-llm-reasoning-effort": "none" }), configured);
+  assert.deepEqual(off.extraBody, { reasoning_effort: "none" });
+  assert.equal(resolveLLMConfig(req(), configured).extraBody, undefined);
+});
+
+test("extra body parameters pass through from the env and the header", () => {
+  process.env.LLM_EXTRA_BODY = '{"thinking_token_budget":512}';
+  try {
+    const configured = getConfig();
+    assert.deepEqual(configured.extraBody, { thinking_token_budget: 512 });
+    assert.deepEqual(resolveLLMConfig(req(), configured).extraBody, {
+      thinking_token_budget: 512,
+    });
+    // The header wins, and wins over the value xev derived.
+    assert.deepEqual(
+      resolveLLMConfig(
+        req({
+          "x-llm-extra-body": '{"reasoning_effort":"high"}',
+          "x-llm-reasoning-effort": "none",
+        }),
+        configured
+      ).extraBody,
+      { reasoning_effort: "high" }
+    );
+  } finally {
+    delete process.env.LLM_EXTRA_BODY;
+  }
+});
+
+test("unusable extra body parameters are ignored, not guessed at", () => {
+  process.env.LLM_EXTRA_BODY = "reasoning_effort=none";
+  try {
+    assert.equal(getConfig().extraBody, undefined);
+  } finally {
+    delete process.env.LLM_EXTRA_BODY;
+  }
+  assert.equal(
+    resolveLLMConfig(req({ "x-llm-extra-body": "[1,2]" }), BASE).extraBody,
+    undefined
+  );
+});
+
+test("thinking that is explicitly requested widens the answer budget", () => {
+  const config = resolveLLMConfig(req({ "x-llm-extra-body": '{"reasoning_effort":"high"}' }), BASE, undefined, 2);
+  assert.equal(config.maxTokens, maxTokensFor(2) + 1024);
+});
+
+test("OpenRouter keeps the reasoning dialect and gains no extra body key", () => {
+  const config = resolveLLMConfig(
+    req({ "x-llm-reasoning-effort": "none" }),
+    OPENROUTER,
+    undefined,
+    2
+  );
+  assert.deepEqual(config.reasoning, { exclude: true, effort: "none" });
+  assert.equal(config.extraBody, undefined);
 });
 
 // ── Token cap ───────────────────────────────────────────────────────────────
 
 test("the token cap is sized from the placeholder count when unset", () => {
-  assert.equal(resolveLLMConfig(req(), BASE, undefined, 2).maxTokens, maxTokensFor(2));
+  // Room for the answer plus the thinking reserve, which every backend gets.
+  assert.equal(
+    resolveLLMConfig(req(), BASE, undefined, 2).maxTokens,
+    maxTokensFor(2) + 1024
+  );
   // A 255-option question still fits in the answer budget.
   assert.ok(maxTokensFor(255) >= 255 * 6);
 });
 
 test("an explicit cap wins over the computed one", () => {
+  // An explicit cap is the cap on the answer, so the reserve is not added to it.
   assert.equal(resolveLLMConfig(req({ "x-llm-max-tokens": "512" }), BASE, undefined, 2).maxTokens, 512);
   const withEnv: ServerConfig = { ...BASE, maxTokens: 256 };
   assert.equal(resolveLLMConfig(req(), withEnv, undefined, 2).maxTokens, 256);

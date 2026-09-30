@@ -34,7 +34,16 @@ export interface LLMClientConfig {
   allowFallbacks?: boolean;
   // OpenRouter: "deny" only routes to providers that do not train on the prompt.
   dataCollection?: "allow" | "deny";
+  // OpenRouter's reasoning dialect: the model may think, `exclude` keeps the
+  // trace out of the response, `effort` and `maxTokens` bound the thinking.
   reasoning?: LLMReasoningConfig;
+  // Parameters merged into the request body last, after everything xev built.
+  // This is how the standard OpenAI reasoning controls reach a backend that is
+  // not a router: `reasoning_effort` is what LM Studio, SGLang and vLLM all
+  // honor (vLLM translates it into the chat template's own `enable_thinking`),
+  // and it is also the escape hatch for anything else a server understands,
+  // such as `chat_template_kwargs` or `thinking_token_budget`.
+  extraBody?: Record<string, unknown>;
 }
 
 export interface LLMResult {
@@ -157,6 +166,9 @@ export async function callLLM(
     if (config.reasoning.maxTokens) reasoning.max_tokens = config.reasoning.maxTokens;
     if (Object.keys(reasoning).length > 0) body.reasoning = reasoning;
   }
+  // Last word on the body goes to the operator, so a key here overrides whatever
+  // xev derived for the same name.
+  if (config.extraBody) Object.assign(body, config.extraBody);
 
   const response = await client.chat.completions.create(
     // The body is assembled above so OpenRouter-only keys can be added; the

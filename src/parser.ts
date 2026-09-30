@@ -252,14 +252,41 @@ function buildLegend(q: ScoreQuestion): Record<string, Description> {
   return legend;
 }
 
-// Parses the answer list: `0:0.1;1:0.234;2:0;3:1`
-function parseValuePairs(content: string): LLMValues {
-  const values: LLMValues = {};
-  const pattern = /(\d+)\s*:\s*(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)/g;
-  for (const match of content.matchAll(pattern)) {
-    values[parseInt(match[1], 10)] = parseFloat(match[2]);
+const VALUE_PAIR = /(\d+)\s*:\s*(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)/g;
+
+// An answer list is one run of `index:value` pairs, `;`-separated: `0:0.1;1:0.234`. The
+// model's own prose is what separates two runs. A reasoning trace that arrived
+// untagged therefore looks like a handful of stray pairs in front of the real
+// answer, and taking all pairs at once would let a number the model only floated
+// while thinking stand in for a value it never answered. `start` is where the run
+// began, so the caller can tell an answer list that opens the response from one
+// buried in a trace.
+function parseValuePairRuns(content: string): { values: LLMValues; start: number }[] {
+  const runs: { values: LLMValues; start: number }[] = [];
+  let current: LLMValues = {};
+  let currentStart = 0;
+  let previousEnd = 0;
+
+  for (const match of content.matchAll(VALUE_PAIR)) {
+    const start = match.index ?? 0;
+    const between = content.slice(previousEnd, start);
+    if (Object.keys(current).length > 0 && !/^[\s;,]*$/.test(between)) {
+      runs.push({ values: current, start: currentStart });
+      current = {};
+    }
+    if (Object.keys(current).length === 0) currentStart = start;
+    current[Number.parseInt(match[1], 10)] = Number.parseFloat(match[2]);
+    previousEnd = start + match[0].length;
   }
-  return values;
+
+  if (Object.keys(current).length > 0) runs.push({ values: current, start: currentStart });
+  return runs;
+}
+
+// Everything before the run but separators and a code fence means the model
+// said something first, which on a non-reasoning model it never does.
+function opensTheResponse(content: string, start: number): boolean {
+  return /^\s*(?:```[a-z]*\s*)?$/i.test(content.slice(0, start));
 }
 
 // Fallback for LLMs that answer with the JSON template filled in.
@@ -347,27 +374,55 @@ function rawFromValues(
   return raw;
 }
 
-// Primary format is index:value pairs, JSON is the fallback. Both are parsed
-// and the one that answered more placeholders wins, so a stray `3: 0.5` in the
-// model's prose cannot beat a complete JSON answer.
+interface Candidate {
+  raw: LLMRawOutput;
+  source: "pairs" | "json";
+  // The model put text in front of the answer list, so it was not the whole
+  // response and something other than the answer was in there.
+  preamble: boolean;
+}
+
+// Primary format is index:value pairs, JSON is the fallback. Every pair run and
+// the JSON object are parsed and the one that answered more placeholders wins,
+// so a stray `3: 0.5` in the model's prose cannot beat a complete JSON answer.
+// Within the pairs, the last run wins a tie over the union of all of them and
+// over an earlier run, because a reasoning trace comes before its answer and an
+// answer list is what the model finishes on.
 function parseContent(
   content: string,
   questions: Record<string, Question>
-): { raw: LLMRawOutput; source: "pairs" | "json" } {
-  const candidates: { raw: LLMRawOutput; source: "pairs" | "json" }[] = [];
+): { raw: LLMRawOutput; source: "pairs" | "json"; preamble: boolean } {
+  const candidates: Candidate[] = [];
 
-  const values = parseValuePairs(content);
-  if (Object.keys(values).length > 0) {
-    candidates.push({ raw: rawFromValues(values, questions), source: "pairs" });
+  const runs = parseValuePairRuns(content);
+  for (const run of [...runs].reverse()) {
+    if (Object.keys(run.values).length > 0) {
+      candidates.push({
+        raw: rawFromValues(run.values, questions),
+        source: "pairs",
+        preamble: !opensTheResponse(content, run.start),
+      });
+    }
+  }
+  // The union still earns its place: a model that narrates between pairs gave
+  // every value, and no single run covers them all.
+  const union: LLMValues = {};
+  for (const run of runs) Object.assign(union, run.values);
+  if (Object.keys(union).length > 0) {
+    candidates.push({
+      raw: rawFromValues(union, questions),
+      source: "pairs",
+      preamble: runs.some((run) => !opensTheResponse(content, run.start)),
+    });
   }
   for (const object of parseJsonObjects(content)) {
     const remapped = remapAliases(object, buildAliasMap(questions));
     if (Object.keys(remapped).length > 0) {
-      candidates.push({ raw: remapped, source: "json" });
+      candidates.push({ raw: remapped, source: "json", preamble: false });
     }
   }
 
-  let best: { raw: LLMRawOutput; source: "pairs" | "json" } | undefined;
+  let best: Candidate | undefined;
   let bestAnswered = 0;
   for (const candidate of candidates) {
     const answered = totalAnswered(coverageByQuestion(candidate.raw, questions));
@@ -417,12 +472,22 @@ export function parseResponse(
   usage: { input_tokens: number; output_tokens: number },
   options: ParseOptions = {}
 ): SystemOneResponse {
-  const { raw, source } = parseContent(content, questions);
+  const { raw, source, preamble } = parseContent(content, questions);
   const covers = coverageByQuestion(raw, questions);
   const coverFor = (id: string) => covers.find((c) => c.questionId === id);
 
   const answers: Record<string, Answer> = {};
   const warnings: string[] = [...(options.warnings ?? [])];
+
+  // A backend that returns its thinking trace inline and untagged leaves no
+  // marker to detect it by, so the only evidence is text ahead of the answer
+  // list. Say so rather than let the values pass as if they were all the model
+  // ever said.
+  if (preamble) {
+    warnings.push(
+      "the model put text in front of the answer list; only its final answer list was read (check the reasoning settings if it was reasoning)"
+    );
+  }
 
   for (const [id, q] of Object.entries(questions)) {
     const cover = coverFor(id);

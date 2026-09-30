@@ -226,6 +226,41 @@ test("reasoning is left out of the body when unconfigured", async () => {
   await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
     await callLLM("PROMPT", { ...BASE, baseURL });
     assert.equal("reasoning" in captured[0].body, false);
+    assert.equal("reasoning_effort" in captured[0].body, false);
+  });
+});
+
+test("extra body parameters are sent for a backend that reads them", async () => {
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", {
+      ...BASE,
+      baseURL,
+      extraBody: { reasoning_effort: "none" },
+    });
+    assert.equal(captured[0].body.reasoning_effort, "none");
+  });
+});
+
+test("extra body parameters are merged last and win over what xev built", async () => {
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", {
+      ...BASE,
+      baseURL,
+      maxTokens: 512,
+      reasoning: { exclude: true, effort: "low" },
+      extraBody: { reasoning_effort: "none", max_tokens: 256 },
+    });
+    assert.equal(captured[0].body.reasoning_effort, "none");
+    assert.equal(captured[0].body.max_tokens, 256);
+    assert.deepEqual(captured[0].body.reasoning, { exclude: true, effort: "low" });
+  });
+});
+
+test("an untagged inline trace leaves the answer list in the content", async () => {
+  // Nothing marks this as reasoning, so the parser is what has to cope with it.
+  await withServer({ body: chatReply("Option A looks strong: 0:0.99.\n0:0.2;1:0.8") }, async (baseURL) => {
+    const result = await callLLM("PROMPT", { ...BASE, baseURL });
+    assert.equal(result.content, "Option A looks strong: 0:0.99.\n0:0.2;1:0.8");
   });
 });
 

@@ -139,8 +139,8 @@ This is demo-only: the server has no preset storage and no preset endpoints.
 3. **Config** merges the server's env config with the request's `x-llm-*` headers, and refuses a request that redirects to a host other than the configured one unless it brings its own key
 4. **Prompt builder** serializes state and questions, then generates a response template whose values are indexed placeholders (`${0}`, `${1}`, ...), defined by `buildPlaceholderMap`. Questions appear as `q0`, `q1`, ... — the caller's question ids are never sent to the model
 5. **LLM client** sends the prompt and returns the raw response text (code fences stripped), the usage counters, and `finish_reason`
-6. **Parser** resolves the text to values: it reads `;`-separated `index:value` pairs and maps each index back to its question field through `buildPlaceholderMap`, falling back to a JSON object (with `qN` keys mapped back to question ids) extracted with a brace-balanced scan. Both candidates are parsed and the one that answered more placeholders wins, ties going to the pairs format. It coerces string values to numbers, clamps negatives to 0 and normalizes probabilities per question type, computes confidence as `clamp01((n * max_probability - 1) / (n - 1))` on the full-precision distribution, then rounds probabilities to 2 decimals so they still sum to exactly 1
-7. **Response** is returned in `SystemOneResponse` format, with a `warnings` array when a question was partly or wholly unanswered, when every value it did return was zero, or when the output was truncated (`finish_reason: length`)
+6. **Parser** resolves the text to values: it reads `;`-separated `index:value` pairs and maps each index back to its question field through `buildPlaceholderMap`, falling back to a JSON object (with `qN` keys mapped back to question ids) extracted with a brace-balanced scan. Every contiguous run of pairs, the union of all runs, and every JSON object are parsed as separate candidates and the one that answered more placeholders wins; among pair candidates the last run wins ties, since a reasoning trace comes before its answer. It coerces string values to numbers, clamps negatives to 0 and normalizes probabilities per question type, computes confidence as `clamp01((n * max_probability - 1) / (n - 1))` on the full-precision distribution, then rounds probabilities to 2 decimals so they still sum to exactly 1
+7. **Response** is returned in `SystemOneResponse` format, with a `warnings` array when a question was partly or wholly unanswered, when every value it did return was zero, when the answer list did not open the response (an untagged inline trace), or when the output was truncated (`finish_reason: length`)
 
 ## Connection Resolution
 
@@ -166,7 +166,8 @@ OpenAI SDK, which forwards unknown body keys to the server untouched:
 
 All of these are omitted entirely for non-OpenRouter backends. `max_tokens` is set from the
 placeholder count (`LLM_MAX_TOKENS` overrides) so a 255-option question can still finish its answer
-list; when reasoning is requested, a reasoning reserve is added to that budget.
+list; a reasoning reserve is added to that budget for every backend, so a model that thinks cannot
+starve its own answer.
 
 ## Reasoning Models
 
@@ -175,20 +176,42 @@ against the same `max_tokens` budget. A model that thinks longer than the budget
 `finish_reason: length` with no answer, which used to surface as an unhelpful
 "No index:value pairs found" error.
 
-Four defenses, in `config.ts` and `llm.ts`:
+**Two dialects.** OpenRouter exposes reasoning through the `reasoning` object
+(`exclude`, `effort`, `max_tokens`). Every other OpenAI-compatible server speaks the standard
+top-level `reasoning_effort`: LM Studio and SGLang implement it directly, and vLLM turns it into the
+chat template's own `enable_thinking` (`none` → `false`). `config.ts` maps `LLM_REASONING_EFFORT=none`
+onto `reasoning_effort: "none"` for any non-OpenRouter backend, so "none" means none wherever the
+backend is.
+
+Only the disable direction is derived, and that is measured, not assumed. LM Studio accepts
+`reasoning_effort: "none"` and returns `reasoning_tokens: 0`, but answers `reasoning_effort: "low"`
+with a 400; it also accepts `chat_template_kwargs` and ignores it, and honors neither `/no_think`
+nor `enable_thinking` for this model. So the other effort levels stay OpenRouter-only, where
+sending nothing at least leaves a working request. `LLM_EXTRA_BODY` / `x-llm-extra-body` pass a JSON
+object into the request body verbatim for anything xev does not derive
+(`chat_template_kwargs`, `thinking_token_budget`, a level a server does support), merged last so an
+explicit key there overrides what xev chose. Both are opt-in: unconfigured, xev sends neither key.
+
+**Five defenses**, in `config.ts`, `llm.ts` and `parser.ts`:
 
 1. `reasoning.exclude: true` (default for OpenRouter) keeps the trace out of the response
-2. the answer budget is widened by a reasoning reserve so thinking cannot starve the answer
+2. the answer budget is widened by a reasoning reserve so thinking cannot starve the answer. It is not
+   router-specific: a local Qwen3 thinks whatever xev sends, so a budget with no room for it is a
+   guaranteed `finish_reason: length` with no answer. The reserve is dropped when thinking was
+   switched off, and an explicit `LLM_MAX_TOKENS` is honored as given rather than treated as a base,
+   since it is documented as the cap on the answer
 3. a `reasoning` / `reasoning_content` field is never parsed, and `<think>…</think>` blocks inlined
    in the content are stripped, with `hadReasoning` reported to the caller as a warning
-4. a response that was all thinking raises a specific error carrying the reasoning and visible token
+4. the parser reads each contiguous run of `index:value` pairs as its own candidate, so a trace that
+   arrives inline *untagged* cannot donate a number it only floated while thinking, and the run that
+   won it reports a `warnings` entry saying text came before the answer list
+5. a response that was all thinking raises a specific error carrying the reasoning and visible token
    counts and names the fixes (`LLM_REASONING_EFFORT=none`, a non-reasoning model, a bigger
    `LLM_MAX_TOKENS`) instead of the generic parse failure
 
-Speed comes from `reasoning.effort`: `none` disables thinking where the model allows it, `low` and
-`minimal` bound it. `exclude` alone does not make a model faster, only quieter. The prompt also
-states that the answer list is the whole response, which helps reasoning models on backends that
-have no reasoning controls.
+Speed comes from `reasoning.effort` on a router, and from `LLM_EXTRA_BODY` on a local server.
+`exclude` alone does not make a model faster, only quieter. The prompt also states that the answer
+list is the whole response, which helps reasoning models on backends that have no reasoning controls.
 
 ## Model Discovery
 

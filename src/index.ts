@@ -243,6 +243,16 @@ export function start(port = PORT, host: string | undefined = HOST): void {
     if (isOpenRouter(config.baseURL)) {
       const effort = config.reasoning.effort ? `, effort ${config.reasoning.effort}` : "";
       console.log(`  Reasoning  kept out of the response${effort}`);
+    } else {
+      // Non-router backends get `reasoning_effort` instead, so say which one
+      // this server ends up being asked for. An unset effort means the model
+      // decides, which is worth knowing before it spends the answer budget.
+      const derived =
+        config.reasoning.effort === "none" ? { reasoning_effort: "none" } : undefined;
+      const extra = { ...derived, ...config.extraBody };
+      console.log(
+        `  Reasoning  ${Object.keys(extra).length > 0 ? JSON.stringify(extra) : "up to the model"}`
+      );
     }
     console.log(`\n  Open the demo page above. Ctrl+C to stop.\n`);
   };

@@ -180,6 +180,66 @@ test("a complete pair answer beats a JSON echo of the same answer", () => {
   assert.deepEqual(answer.probabilities, { a: 0.1, b: 0.1, c: 0.8 });
 });
 
+// ── Reasoning that arrives inline and untagged ──
+
+test("an untagged reasoning trace does not contribute values to the answer", () => {
+  // A backend with no reasoning parser leaves the thinking in `content` with no
+  // marker. "0:0.99 was tempting" is a number the model floated while thinking,
+  // not a value it answered, so the answer list it finished on is the answer.
+  const content =
+    "Let me weigh the options. Option A is strong, so 0:0.99 looks tempting. " +
+    "Reconsidering, the ticket mentions two teams.\n0:0.1;1:0.1;2:0.8";
+  const { answers, warnings } = parse(CHOICE_THREE, content);
+  const answer = answers.d;
+  if (answer.type !== "choice") return;
+  assert.deepEqual(answer.probabilities, { a: 0.1, b: 0.1, c: 0.8 });
+  assert.equal(
+    warnings?.some((w) => w.includes("text in front of the answer list")),
+    true
+  );
+});
+
+test("the last answer list wins over an earlier one the model abandoned", () => {
+  const content = "First pass: 0:0.34;1:0.33;2:0.33\nOn reflection:\n0:0.1;1:0.1;2:0.8";
+  const { answers } = parse(CHOICE_THREE, content);
+  const answer = answers.d;
+  if (answer.type !== "choice") return;
+  assert.deepEqual(answer.probabilities, { a: 0.1, b: 0.1, c: 0.8 });
+});
+
+test("pairs narrated one at a time are still all read", () => {
+  // No single run covers the request, so the union is what answers it.
+  const content =
+    "Start with the first option: 0:0.2\nNow the second: 1:0.3\nAnd the third: 2:0.5";
+  const { answers } = parse(CHOICE_THREE, content);
+  const answer = answers.d;
+  if (answer.type !== "choice") return;
+  assert.deepEqual(answer.probabilities, { a: 0.2, b: 0.3, c: 0.5 });
+  assert.equal(sum(answer.probabilities), 1);
+});
+
+test("an answer list that opens the response raises no preamble warning", () => {
+  const { warnings } = parse(CHOICE_THREE, "0:0.1;1:0.1;2:0.8");
+  assert.equal(warnings, undefined);
+});
+
+test("a fenced answer list after prose is read and still flagged", () => {
+  const content = "Considering both teams.\n```\n0:0.1;1:0.1;2:0.8\n```";
+  const { answers, warnings } = parse(CHOICE_THREE, content);
+  const answer = answers.d;
+  if (answer.type !== "choice") return;
+  assert.deepEqual(answer.probabilities, { a: 0.1, b: 0.1, c: 0.8 });
+  assert.equal(
+    warnings?.some((w) => w.includes("text in front of the answer list")),
+    true
+  );
+});
+
+test("a fenced answer list alone is not flagged as a preamble", () => {
+  const { warnings } = parse(CHOICE_THREE, "```\n0:0.1;1:0.1;2:0.8\n```");
+  assert.equal(warnings, undefined);
+});
+
 test("braces in the model's prose do not break JSON extraction", () => {
   // A greedy /\{[\s\S]*\}/ grab would run past the object into the "}" below
   // and fail to parse.

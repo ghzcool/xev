@@ -53,8 +53,9 @@ Set environment variables in `.env`:
 | `LLM_PROVIDER_ORDER` | (empty) | OpenRouter upstream provider order, e.g. `groq,together` |
 | `LLM_DATA_COLLECTION` | (empty) | Set to `deny` to use only providers that don't train on prompts |
 | `LLM_REASONING_EXCLUDE` | `true` | Ask OpenRouter not to return the thinking trace |
-| `LLM_REASONING_EFFORT` | (empty) | `none` to skip thinking, or `minimal`/`low`/`medium`/`high` to allow some |
-| `LLM_REASONING_MAX_TOKENS` | (empty) | Hard cap on thinking tokens |
+| `LLM_REASONING_EFFORT` | (empty) | `none` to skip thinking (works on local backends too), or `minimal`/`low`/`medium`/`high` (OpenRouter) to allow some |
+| `LLM_REASONING_MAX_TOKENS` | (empty) | Hard cap on thinking tokens (OpenRouter) |
+| `LLM_EXTRA_BODY` | (empty) | JSON object merged into the LLM request body, e.g. `{"reasoning_effort":"high"}` |
 | `OPENROUTER_REFERER` | `http://localhost:3000` | OpenRouter app attribution |
 | `OPENROUTER_TITLE` | `xev` | OpenRouter app attribution |
 | `LLM_DISCOVER_MODELS` | auto | Serve the backend catalog at `/v1/models` (auto for routers) |
@@ -95,25 +96,45 @@ before answering, and those tokens are billed and **count against the same `max_
 Left alone, a thinking model can spend the whole budget thinking and return
 `finish_reason: length` with no answer at all.
 
-xev handles this three ways:
+xev handles this four ways:
 
 1. **`reasoning.exclude: true`** (on by default for OpenRouter) — the model may think, but the trace
    is not returned, so only the answer list reaches the parser.
 2. **A wider `max_tokens`** — the answer budget is added to a reasoning reserve, so thinking cannot
-   starve the answer.
-3. **Recovery and honest errors** — reasoning returned in a separate `reasoning` /
-   `reasoning_content` field is ignored, `<think>…</think>` blocks inlined in the answer are stripped,
-   and if a response was all thinking the error says so with the token counts instead of reporting
-   "no index:value pairs found".
+   starve the answer. This applies to every backend, since a local Qwen3 thinks whatever xev sends.
+   Setting `LLM_MAX_TOKENS` to a positive value overrides it with a cap of its own.
+3. **Reading only the answer** — reasoning returned in a separate `reasoning` / `reasoning_content`
+   field is ignored, `<think>…</think>` blocks inlined in the answer are stripped, and a trace that
+   arrives *untagged* is handled by the parser reading the model's final answer list rather than the
+   numbers it floated while thinking. If a response was all thinking, the error says so with the token
+   counts instead of reporting "no index:value pairs found".
 
-To make it faster, cap or switch off the thinking:
+### Switching thinking off
+
+Backends spell reasoning two different ways, and xev speaks both:
+
+- **OpenRouter** uses the `reasoning` object (`exclude`, `effort`, `max_tokens`).
+- **Every other OpenAI-compatible server** — LM Studio, SGLang, vLLM — uses the standard top-level
+  `reasoning_effort`. vLLM translates it into the chat template's own `enable_thinking`.
 
 ```bash
-LLM_REASONING_EFFORT=none     # no thinking at all, where the model supports it
-LLM_REASONING_EFFORT=low      # a little thinking
-LLM_REASONING_MAX_TOKENS=2048 # hard cap
-LLM_REASONING_EXCLUDE=false   # return the trace, for debugging
+LLM_REASONING_EFFORT=none     # no thinking at all, on any backend
+LLM_REASONING_EFFORT=low      # a little thinking (OpenRouter)
+LLM_REASONING_MAX_TOKENS=2048 # hard cap (OpenRouter)
+LLM_REASONING_EXCLUDE=false   # return the trace, for debugging (OpenRouter)
+
+# Anything else your backend understands - merged into the request body last:
+LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
+LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}'
+LLM_EXTRA_BODY='{"thinking_token_budget":1024}'
 ```
+
+`none` is the setting that works everywhere: against a non-OpenRouter backend it becomes
+`reasoning_effort: "none"`, and the answer budget stops reserving room for thinking it will not do.
+The other effort levels stay OpenRouter-only, because a local backend may not implement them —
+LM Studio, for instance, answers `reasoning_effort: "low"` with a 400 — and `LLM_EXTRA_BODY` is
+there for when yours does. Nothing is sent unless you configure it, so a server that rejects an
+unknown body key is never asked to.
 
 Set these in `.env` rather than per request. Models that require reasoning (`mandatory` in the
 `/v1/models` entry) reject `effort: "none"`; `low` and `minimal` are the safe choices there.
@@ -134,6 +155,7 @@ Any request can override the connection with headers:
 | `x-llm-reasoning-effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `x-llm-reasoning-max-tokens` | Cap on thinking tokens |
 | `x-llm-reasoning-exclude` | `true`/`false` |
+| `x-llm-extra-body` | JSON object merged into the LLM request body |
 | `x-llm-max-tokens` | Answer token cap |
 
 xev only ever sends its own `LLM_API_KEY` to the base URL it is configured for. A request that
