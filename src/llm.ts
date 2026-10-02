@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { Image } from "./types";
 
 export type ReasoningEffort =
   | "max"
@@ -111,9 +112,40 @@ function bodyError(response: unknown): string | null {
   return typeof message === "string" ? message : JSON.stringify(error);
 }
 
+/**
+ * Builds the user message. A vision model takes multimodal input as an array of
+ * content parts rather than a string:
+ *
+ *   content: [ { type: "text", text }, { type: "image_url", image_url: { url } } ]
+ *
+ * `url` is an `http(s)` URL or a `data:` URI; the data URI is what a local
+ * backend needs, since it has no way to fetch an external one. Text first, then
+ * images, which is the order these models are trained to read.
+ *
+ * Without images the content stays a plain string: every text-only model accepts
+ * an array, but keeping the existing shape means an image-free request is
+ * byte-identical to what it was before this existed.
+ */
+function userContent(prompt: string, images: Image[]): string | unknown[] {
+  if (images.length === 0) return prompt;
+  return [
+    { type: "text", text: prompt },
+    ...images.map((image) => ({
+      type: "image_url",
+      image_url: {
+        url: image.url,
+        // Omitted unless asked for: `detail` is an OpenAI-specific key and some
+        // local servers reject a request carrying one.
+        ...(image.detail ? { detail: image.detail } : {}),
+      },
+    })),
+  ];
+}
+
 export async function callLLM(
   prompt: string,
-  config: LLMClientConfig
+  config: LLMClientConfig,
+  images: Image[] = []
 ): Promise<LLMResult> {
   const defaultHeaders: Record<string, string> = {};
   if (config.referer) defaultHeaders["HTTP-Referer"] = config.referer;
@@ -151,7 +183,7 @@ export async function callLLM(
       },
       {
         role: "user",
-        content: prompt,
+        content: userContent(prompt, images),
       },
     ],
     temperature: 0,

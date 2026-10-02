@@ -7,6 +7,12 @@ export interface ValidationError {
   details?: unknown;
 }
 
+// Images are an xev extension with no documented Jev limit. A request carrying
+// more than this is not a question about vision: local backends take one image
+// per request in practice, and every one of them is base64 in the body, so the
+// count is what bounds the payload size rather than the content itself.
+const MAX_IMAGES = 8;
+
 // A question that matches none of the type branches only produces "Invalid
 // input" from zod, which tells a client nothing. Walk the branches instead: the
 // type literals they expect, plus whatever the branch that accepted the type
@@ -72,6 +78,16 @@ export function validateRequest(body: unknown): {
   if (result.success) {
     const questions = result.data.questions;
     const questionCount = Object.keys(questions).length;
+    const images = result.data.images;
+    if (images && images.length > MAX_IMAGES) {
+      return {
+        success: false,
+        error: {
+          status: 422,
+          error: `Validation failed: images has ${images.length} entries; a request accepts at most ${MAX_IMAGES}`,
+        },
+      };
+    }
     if (questionCount === 0) {
       // An empty questions map is a structurally valid record to zod, but there
       // is nothing to evaluate and no placeholder for the model to answer.

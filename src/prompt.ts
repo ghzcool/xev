@@ -1,4 +1,5 @@
 import type {
+  Image,
   Instructions,
   Question,
   Placeholder,
@@ -151,9 +152,29 @@ function buildTemplate(
   return JSON.stringify(template, null, 2).replace(/"(\$\{\d+\})"/g, "$1");
 }
 
+/**
+ * The block that makes an attached image part of the STATE rather than an
+ * afterthought. Without it the model treats the picture as context and answers
+ * from the text alone, which is the failure this exists to prevent.
+ *
+ * `alt` labels are numbered the way the images arrive, so a question can say
+ * "image 2" and mean one thing.
+ */
+function imageNotice(images: Image[]): string {
+  const count = images.length;
+  const labels = images
+    .map((image, i) => (image.alt ? `${i + 1} = "${image.alt}"` : null))
+    .filter((label): label is string => label !== null);
+
+  return `IMAGES:
+${count} image${count === 1 ? " is" : "s are"} attached to this message${labels.length ? `, labelled ${labels.join(", ")}` : ""}, and ${count === 1 ? "is" : "are"} part of the STATE - not separate context.
+Read every image before answering: transcribe any text, numbers, labels, and error messages you can see, note what state the UI is in, and weigh all of it together with the STATE above when answering each QUESTION. If the text and an image disagree, the image wins, since it is what the user actually saw.`;
+}
+
 export function buildPrompt(
   state: string | Record<string, unknown> | unknown[],
-  questions: Record<string, Question>
+  questions: Record<string, Question>,
+  images: Image[] = []
 ): string {
   const stateStr =
     typeof state === "string" ? state : JSON.stringify(state, null, 2);
@@ -165,6 +186,8 @@ export function buildPrompt(
     .join("\n\n---\n\n");
 
   const template = buildTemplate(bindings, questions);
+
+  const imageBlock = images.length > 0 ? `\n\n${imageNotice(images)}` : "";
 
   return `You are a precise evaluation engine. Evaluate the STATE against each QUESTION.
 
@@ -181,7 +204,7 @@ RULES:
 10. Spend as few tokens as possible. Keep any deliberation to a minimum, then emit the list.
 
 STATE:
-${stateStr}
+${stateStr}${imageBlock}
 
 QUESTIONS:
 ${questionPrompts}

@@ -57,7 +57,7 @@ export async function evaluate(
     };
   }
 
-  const { state, model, questions } = validation.data;
+  const { state, images, model, questions } = validation.data;
 
   try {
     const llmConfig = resolveLLMConfig(
@@ -66,8 +66,8 @@ export async function evaluate(
       model,
       buildPlaceholderMap(questions).length
     );
-    const prompt = buildPrompt(state, questions);
-    const result = await callLLM(prompt, llmConfig);
+    const prompt = buildPrompt(state, questions, images ?? []);
+    const result = await callLLM(prompt, llmConfig, images ?? []);
 
     // Transport-level problems the parser cannot see: a truncated answer looks
     // like a model that chose not to answer some placeholders.

@@ -18,13 +18,16 @@ import {
 loadEnvFile();
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+const serverConfig = getConfig();
+
+// Base64 images inflate a request by about a third, so the limit is a server
+// setting (MAX_BODY_MB) rather than a constant: raising it is the only way to
+// accept a very large screenshot, and it should be the operator's call.
+app.use(express.json({ limit: `${serverConfig.bodyLimitMb}mb` }));
 
 // ── CORS (off unless CORS_ORIGIN is set) ────────────────────────────────────
 // Browser clients calling /v1/systemone cross origins, and TypeSafe's real API
 // allows that, so a drop-in replacement should too.
-const serverConfig = getConfig();
-
 if (serverConfig.corsOrigins.length > 0) {
   const allowAll = serverConfig.corsOrigins.includes("*");
   const allowed = new Set(serverConfig.corsOrigins);

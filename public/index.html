@@ -99,6 +99,26 @@
   .tab:hover { color: #fff; }
   .tab.active { border-color: #e551ba; color: #fff; background: #1a1a1a; }
   .copied { border-color: #27ae60 !important; color: #27ae60 !important; }
+
+  .dropzone {
+    display: block; border: 1px dashed #444; border-radius: 6px; padding: 18px 16px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: #e551ba; background: #1f1f1f; }
+  .dz-main { font-size: 13px; color: #aaa; }
+  .dz-hint { font-size: 12px; color: #555; margin-top: 5px; }
+
+  .thumbs { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+  .thumb { position: relative; width: 132px; }
+  .thumb img { width: 132px; height: 96px; object-fit: cover; border-radius: 4px; border: 1px solid #333; display: block; background: #000; }
+  .thumb .thumb-label { margin-top: 4px; padding: 3px 6px; font-size: 11px; }
+  .thumb .thumb-remove {
+    position: absolute; top: -7px; right: -7px; width: 19px; height: 19px; padding: 0;
+    background: #222; border: 1px solid #444; border-radius: 50%; color: #ccc;
+    cursor: pointer; font-size: 13px; line-height: 1; font-family: inherit;
+  }
+  .thumb .thumb-remove:hover { background: #e74c3c; border-color: #e74c3c; color: #fff; }
+  .img-msg { font-size: 12px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -153,6 +173,18 @@
       <button class="btn btn-sm btn-primary" onclick="savePreset()">Save</button>
       <span class="preset-msg" id="preset-msg"></span>
     </div>
+  </div>
+
+  <!-- Images -->
+  <div class="section">
+    <div class="section-title">Images <span style="text-transform:none;letter-spacing:0;color:#666;font-weight:400">(evaluated as part of the state)</span></div>
+    <label class="dropzone" id="dropzone" for="image-input">
+      <div class="dz-main">Paste a screenshot anywhere on this page, drop one here, or click to pick a file</div>
+      <div class="dz-hint">PNG, JPEG, WebP, GIF &middot; up to 8 &middot; needs a vision-capable model &middot; not saved with presets</div>
+    </label>
+    <input type="file" id="image-input" accept="image/*" multiple hidden onchange="pickImages(this)" />
+    <div class="thumbs" id="image-strip"></div>
+    <div class="preset-msg img-msg" id="image-msg"></div>
   </div>
 
   <!-- Questions -->
@@ -264,6 +296,105 @@ window.loadModels = async () => {
     showModelsMsg(`Failed: ${err.message}`);
   }
 };
+
+// ── Images ──────────────────────────────────────────────────────────────────
+// The wire format is an OpenAI `image_url` content part, whose url is an http(s)
+// URL or a data URI. A data URI is what a local backend needs - it has no way to
+// fetch an external one - and it is also what the browser hands over, so paste,
+// drop and file-pick all end up in the same place.
+//
+// Not persisted in localStorage: a single base64 screenshot is megabytes and
+// would blow the storage quota that everything else in this page relies on.
+const MAX_IMAGES = 8;
+let images = []; // { url (data URI), name, alt }
+
+function renderImages() {
+  document.getElementById("image-strip").innerHTML = images.map((img, i) => `
+    <div class="thumb">
+      <button class="thumb-remove" onclick="removeImage(${i})" title="Remove">&times;</button>
+      <img src="${img.url}" alt="${esc(img.alt || img.name)}" />
+      <input class="thumb-label" value="${esc(img.alt)}" placeholder="label"
+             title="Optional: lets a question refer to this image by name"
+             onchange="updateImageAlt(${i}, this.value)" />
+    </div>`).join("");
+  updatePreview();
+}
+
+window.removeImage = (i) => { images.splice(i, 1); renderImages(); };
+window.updateImageAlt = (i, v) => { images[i].alt = v; updatePreview(); };
+
+let imageMsgTimer = null;
+function showImageMsg(text, isError) {
+  const el = document.getElementById("image-msg");
+  el.textContent = text;
+  el.style.color = isError ? "#e74c3c" : "#27ae60";
+  clearTimeout(imageMsgTimer);
+  imageMsgTimer = setTimeout(() => { el.textContent = ""; }, 4000);
+}
+
+function addFiles(fileList) {
+  const all = Array.from(fileList || []);
+  const pics = all.filter(f => f.type && f.type.startsWith("image/"));
+  const skipped = all.length - pics.length;
+  const accepted = pics.slice(0, Math.max(0, MAX_IMAGES - images.length));
+  const dropped = pics.length - accepted.length;
+
+  const parts = [];
+  if (accepted.length) parts.push(`Added ${accepted.length} image${accepted.length > 1 ? "s" : ""}`);
+  if (dropped) parts.push(`dropped ${dropped} (limit is ${MAX_IMAGES})`);
+  if (skipped) parts.push(`skipped ${skipped} non-image file${skipped > 1 ? "s" : ""}`);
+  showImageMsg(parts.join(" \u00b7 "), dropped + skipped > 0);
+
+  accepted.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      images.push({ url: String(reader.result), name: file.name || "pasted image", alt: "" });
+      renderImages();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+window.pickImages = (input) => {
+  addFiles(input.files);
+  // Cleared so picking the same file twice in a row still fires a change.
+  input.value = "";
+};
+
+// A copied screenshot is the common case, and the state textarea has nothing
+// useful to do with an image, so this listens on the whole page. When the
+// clipboard carries text as well the default paste is left alone and the image
+// is attached anyway.
+document.addEventListener("paste", (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind !== "file" || !items[i].type.startsWith("image/")) continue;
+    const file = items[i].getAsFile();
+    if (file) files.push(file);
+  }
+  if (files.length === 0) return;
+  addFiles(files);
+  if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+});
+
+// Scoped to the drop zone rather than the page: it highlights, so it is obvious
+// where a file will land.
+const dropzone = document.getElementById("dropzone");
+["dragenter", "dragover"].forEach(type =>
+  dropzone.addEventListener(type, (e) => {
+    e.preventDefault();
+    dropzone.classList.add("drag");
+  })
+);
+["dragleave", "drop"].forEach(type =>
+  dropzone.addEventListener(type, (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("drag");
+  })
+);
+dropzone.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
 
 // ── Questions ──────────────────────────────────────────────────────────────
 function addQuestion(type, data) {
@@ -396,15 +527,45 @@ function buildRequest() {
     }
     questionsObj[q.id] = entry;
   });
-  return {
+  const request = {
     state: document.getElementById("state").value,
     model: document.getElementById("cfg-model").value,
     questions: questionsObj,
   };
+  if (images.length) {
+    request.images = images.map(img => {
+      const entry = { url: img.url };
+      const alt = (img.alt || "").trim();
+      if (alt) entry.alt = alt;
+      return entry;
+    });
+  }
+  return request;
 }
 
-function getCurl() {
-  const body = JSON.stringify(buildRequest(), null, 2).replace(/'/g, "'\\''");
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// The preview shows the request with image payloads abbreviated: several megabytes
+// of base64 in a scrollable box helps nobody. Only the preview is abbreviated -
+// Copy and Send use the real body, so what leaves this page still works.
+function previewRequest() {
+  const request = buildRequest();
+  if (!request.images) return request;
+  return {
+    ...request,
+    images: request.images.map(img => ({
+      ...img,
+      url: `${img.url.slice(0, 30)}\u2026 (${formatBytes(Math.round((img.url.length - img.url.indexOf(",") - 1) * 0.75))} of image data omitted)`,
+    })),
+  };
+}
+
+function getCurl(real) {
+  const body = JSON.stringify(real ? buildRequest() : previewRequest(), null, 2).replace(/'/g, "'\\''");
   const lines = [`curl -X POST ${apiUrl()} \\`];
   const headers = buildHeaders();
   const entries = Object.entries(headers);
@@ -416,10 +577,10 @@ function getCurl() {
   return lines.join("\n");
 }
 
-function currentRequestText() {
-  if (reqTab === "curl") return getCurl();
+function currentRequestText(real) {
+  if (reqTab === "curl") return getCurl(real);
   if (reqTab === "headers") return JSON.stringify(buildHeaders(), null, 2);
-  return JSON.stringify(buildRequest(), null, 2);
+  return JSON.stringify(real ? buildRequest() : previewRequest(), null, 2);
 }
 
 function setReqTab(tab) {
@@ -434,7 +595,10 @@ function setReqTab(tab) {
 
 function updatePreview() {
   document.getElementById("req-url").textContent = apiUrl();
-  document.getElementById("preview").textContent = currentRequestText();
+  const note = images.length
+    ? `\n\n\u2014 image data abbreviated above; Copy and Send use it in full \u2014`
+    : "";
+  document.getElementById("preview").textContent = currentRequestText(false) + note;
   // Nothing to evaluate without a question; a choice also needs at least one
   // option, which the server enforces with a 422.
   const noCriteria = questions.some(q => q.type === "choice" && !(q.criteria || []).some(c => String(c.key || "").trim()));
@@ -446,7 +610,9 @@ function updatePreview() {
 }
 
 async function copyRequest() {
-  const text = currentRequestText();
+  // The real body, not the abbreviated preview: the point of copying is a request
+  // that works when pasted elsewhere.
+  const text = currentRequestText(true);
   const btn = document.getElementById("copy-btn");
   try {
     await navigator.clipboard.writeText(text);
@@ -584,6 +750,11 @@ function persistSavedPresets() {
 function applyPreset(p) {
   document.getElementById("state").value = p.state || "";
   save("state", p.state || "");
+  // A preset replaces the state, and an attached image is part of the state -
+  // leaving the previous one attached would silently contaminate the scenario.
+  // Presets never carry images: base64 in localStorage would blow the quota.
+  images = [];
+  renderImages();
   questions = JSON.parse(JSON.stringify(p.questions || []));
   bumpQuestionCounter(questions);
   saveQuestions();
@@ -664,6 +835,8 @@ window.removePreset = (id) => {
 window.clearAll = () => {
   questions = [];
   saveQuestions();
+  images = [];
+  renderImages();
   document.getElementById("state").value = "";
   save("state", "");
   renderQuestions();
@@ -674,6 +847,7 @@ window.clearAll = () => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 renderQuestions();
+renderImages();
 renderPresets();
 updatePreview();
 </script>

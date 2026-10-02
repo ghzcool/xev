@@ -205,6 +205,70 @@ test("missing usage counters default to zero", async () => {
   );
 });
 
+// ── Images ──────────────────────────────────────────────────────────────────
+
+test("an image becomes an image_url content part after the text", async () => {
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", { ...BASE, baseURL }, [
+      { url: "data:image/png;base64,AAAA" },
+      { url: "https://example.com/b.jpg" },
+    ]);
+    const user = (captured[0].body.messages as { role: string; content: unknown }[])[1];
+    assert.equal(user.role, "user");
+    assert.deepEqual(user.content, [
+      { type: "text", text: "PROMPT" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      { type: "image_url", image_url: { url: "https://example.com/b.jpg" } },
+    ]);
+  });
+});
+
+test("without images the user content stays a plain string", async () => {
+  // Every text-only model accepts an array, but keeping the old shape means an
+  // image-free request is unchanged, which is what the rest of the suite assumes.
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", { ...BASE, baseURL });
+    const user = (captured[0].body.messages as { role: string; content: unknown }[])[1];
+    assert.equal(user.content, "PROMPT");
+  });
+});
+
+test("an empty image list behaves like no images", async () => {
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", { ...BASE, baseURL }, []);
+    const user = (captured[0].body.messages as { role: string; content: unknown }[])[1];
+    assert.equal(user.content, "PROMPT");
+  });
+});
+
+test("detail is sent only when the caller asked for it", async () => {
+  // Some local servers reject a body carrying keys they do not know, so the
+  // OpenAI-specific `detail` must not appear by default.
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", { ...BASE, baseURL }, [
+      { url: "data:image/png;base64,AAAA" },
+      { url: "data:image/png;base64,BBBB", detail: "low" },
+    ]);
+    const parts = (captured[0].body.messages as { content: unknown[] }[])[1].content as {
+      type: string;
+      image_url: Record<string, unknown>;
+    }[];
+    const images = parts.filter(p => p.type === "image_url");
+    assert.equal(images.length, 2);
+    assert.equal("detail" in images[0].image_url, false);
+    assert.equal(images[1].image_url.detail, "low");
+  });
+});
+
+test("alt text is prompt-side only and never rides along in the request", async () => {
+  await withServer({ body: chatReply("0:0.5") }, async (baseURL, captured) => {
+    await callLLM("PROMPT", { ...BASE, baseURL }, [
+      { url: "data:image/png;base64,AAAA", alt: "the login screen" },
+    ]);
+    assert.equal(JSON.stringify(captured[0].body).includes("the login screen"), false);
+  });
+});
+
 // ── Reasoning models ────────────────────────────────────────────────────────
 
 test("the reasoning object is sent when configured", async () => {

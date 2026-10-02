@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { evaluate, type EvaluateOptions, type EvaluateOutcome } from "../evaluate";
-import { SystemOneResponseSchema, type Description, type SystemOneResponse } from "../types";
+import {
+  ImageSchema,
+  SystemOneResponseSchema,
+  type Description,
+  type SystemOneResponse,
+} from "../types";
 
 export const EVALUATE_TOOL_NAME = "xev_evaluate";
 
@@ -17,6 +22,12 @@ Send one piece of \`state\` (any text, or a JSON object/array describing it) plu
 \`questions\`. Every question in the map is answered in a SINGLE LLM call, so batch as many as
 you need - splitting them across calls costs latency and money for no benefit. Question ids
 are yours to choose; the model never sees them.
+
+Optionally attach up to 8 \`images\` (a screenshot, a photo of a document, a rendered page). They
+are evaluated as part of the \`state\`, not as extra context, so a question can be about what is
+visible in one. This needs a vision-capable model, and base64 image data is expensive in your
+context window - describe the image in \`state\` instead unless the picture genuinely carries
+information the text does not.
 
 Each question has a "type" and "instructions" (a string, or an object/array with more detail):
 
@@ -67,6 +78,16 @@ export const EVALUATE_INPUT_SHAPE = {
   state: z
     .union([z.string(), z.record(z.unknown()), z.array(z.unknown())])
     .describe(STATE_DESCRIPTION),
+  images: z
+    .array(ImageSchema)
+    .max(8)
+    .optional()
+    .describe(
+      `Optional images to evaluate as part of the state, at most 8. Each is
+      { "url": "data:image/png;base64,...", "alt": "optional one-line description", "detail": "low" | "high" }.
+      The url must be an http(s) URL or a data:image/*;base64 URI - a local backend cannot fetch an
+      external one. Requires a vision-capable model; a text-only one rejects the request.`
+    ),
   questions: z.record(z.unknown()).describe(QUESTIONS_DESCRIPTION),
   model: z
     .string()
@@ -78,6 +99,7 @@ export const EVALUATE_INPUT_SHAPE = {
 
 export type EvaluateInput = {
   state: unknown;
+  images?: unknown;
   questions: Record<string, unknown>;
   model?: string;
 };

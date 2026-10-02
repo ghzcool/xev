@@ -142,3 +142,64 @@ test("a missing state is rejected with details", () => {
 test("the offending question id appears in the error", () => {
   expectRejected({ my_question: scoreWithLevels(11) }, /"my_question"/);
 });
+
+// ── Images ──────────────────────────────────────────────────────────────────
+
+const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+test("a request without images is unaffected", () => {
+  assert.equal(validate(body({ n: { type: "noul", instructions: "x" } })).success, true);
+});
+
+test("an image as a data URI or an https URL is accepted", () => {
+  for (const url of [PNG, "https://example.com/a.png", "http://example.com/a.png"]) {
+    const result = validate(body({ n: { type: "noul", instructions: "x" } }, { images: [{ url }] }));
+    assert.equal(result.success, true, `image ${url} was rejected`);
+  }
+});
+
+test("bare base64 is rejected, because nothing says what the bytes are", () => {
+  const result = validate(body({ n: { type: "noul", instructions: "x" } }, {
+    images: [{ url: "iVBORw0KGgo=" }],
+  }));
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.equal(result.error.status, 422);
+  assert.match(result.error.error, /data:image/);
+});
+
+test("a non-image data URI is rejected", () => {
+  const result = validate(body({ n: { type: "noul", instructions: "x" } }, {
+    images: [{ url: "data:text/plain;base64,aGk=" }],
+  }));
+  assert.equal(result.success, false);
+});
+
+test("up to 8 images are accepted and a 9th is a 422", () => {
+  const questions = { n: { type: "noul", instructions: "x" } as const };
+  const many = (count: number) => Array.from({ length: count }, () => ({ url: PNG }));
+  assert.equal(validate(body(questions, { images: many(8) })).success, true);
+
+  const result = validate(body(questions, { images: many(9) }));
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.equal(result.error.status, 422);
+  assert.match(result.error.error, /at most 8/);
+});
+
+test("an unknown detail value is rejected", () => {
+  const result = validate(body({ n: { type: "noul", instructions: "x" } }, {
+    images: [{ url: PNG, detail: "medium" }],
+  }));
+  assert.equal(result.success, false);
+});
+
+test("alt text and detail survive validation", () => {
+  const result = validate(body({ n: { type: "noul", instructions: "x" } }, {
+    images: [{ url: PNG, alt: "the error dialog", detail: "high" }],
+  }));
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  assert.equal(result.data.images?.[0].alt, "the error dialog");
+  assert.equal(result.data.images?.[0].detail, "high");
+});

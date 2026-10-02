@@ -121,3 +121,52 @@ test("object and array instructions are serialized as JSON", () => {
   assert.match(prompt, /"task": "classify"/);
   assert.match(prompt, /"labels": \[/);
 });
+
+// ── Images are part of the state, not a footnote ────────────────────────────
+
+test("no images means no image instructions in the prompt", () => {
+  const prompt = buildPrompt("hello", MIXED);
+  assert.equal(prompt.includes("IMAGES:"), false);
+});
+
+test("an attached image is declared part of the STATE", () => {
+  const prompt = buildPrompt("hello", MIXED, [{ url: "data:image/png;base64,AAAA" }]);
+  assert.match(prompt, /1 image is attached to this message/);
+  assert.match(prompt, /part of the STATE/);
+  // The model has to be told to actually look, or it answers from the text.
+  assert.match(prompt, /Read every image before answering/);
+  // And it must sit inside the STATE block, not after the questions.
+  assert.ok(prompt.indexOf("IMAGES:") < prompt.indexOf("QUESTIONS:"));
+});
+
+test("several images are counted and each is in scope", () => {
+  const prompt = buildPrompt("hello", MIXED, [
+    { url: "data:image/png;base64,AAAA" },
+    { url: "https://example.com/b.jpg" },
+  ]);
+  assert.match(prompt, /2 images are attached to this message/);
+});
+
+test("alt labels are numbered so a question can refer to one image", () => {
+  const prompt = buildPrompt("hello", MIXED, [
+    { url: "data:image/png;base64,AAAA" },
+    { url: "data:image/png;base64,BBBB", alt: "the error dialog" },
+  ]);
+  assert.match(prompt, /2 = "the error dialog"/);
+});
+
+test("image bytes never enter the prompt itself", () => {
+  // The image travels as an `image_url` part, not as prompt text: a model that
+  // cannot read images must still get a prompt that makes no sense to inline it.
+  const prompt = buildPrompt("hello", MIXED, [{ url: "data:image/png;base64,AAAABBBBCCCC" }]);
+  assert.equal(prompt.includes("AAAABBBBCCCC"), false);
+});
+
+test("the placeholder template is unaffected by images", () => {
+  const prompt = buildPrompt("hello", MIXED, [{ url: "data:image/png;base64,AAAA" }]);
+  const expected = buildPlaceholderMap(MIXED).length;
+  for (let i = 0; i < expected; i++) {
+    assert.ok(prompt.includes(`\${${i}}`), `template is missing \${${i}}`);
+  }
+  assert.equal(prompt.includes(`\${${expected}}`), false);
+});

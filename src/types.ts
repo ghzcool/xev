@@ -47,11 +47,37 @@ export type ChoiceQuestion = z.infer<typeof ChoiceQuestionSchema>;
 export type ScoreQuestion = z.infer<typeof ScoreQuestionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 
+// ── Images ──────────────────────────────────────────────────────────────────
+// An image the model should read as part of the state. `url` is exactly what
+// the OpenAI-compatible chat API accepts in an `image_url` part: an `http(s)`
+// URL, or a `data:image/<type>;base64,<payload>` URI. Bare base64 is rejected -
+// without the media type prefix neither xev nor the model can tell a PNG from
+// a JPEG, and `readAsDataURL` is what the browser gives us anyway.
+export const ImageSchema = z.object({
+  url: z.string().min(1).refine(
+    (url) => /^(data:image\/|https?:\/\/)/i.test(url),
+    "must be an http(s) URL or a data:image/*;base64 URI"
+  ),
+  // "low" | "high" trade tokens for fidelity. Omitted entirely unless the
+  // caller asks: it is OpenAI-specific, and local servers reject the request
+  // when handed a key they do not know.
+  detail: z.enum(["auto", "low", "high"]).optional(),
+  // A one-line description of what the image shows, put in front of the model
+  // so a question can refer to it ("image 2"). Never replaces the image.
+  alt: z.string().optional(),
+});
+
+export type Image = z.infer<typeof ImageSchema>;
+
 // ── Request ─────────────────────────────────────────────────────────────────
 // `model` is optional: Jev clients either omit it or send the "jev-latest"
 // alias, and index.ts falls back to LLM_MODEL in both cases.
 export const SystemOneRequestSchema = z.object({
   state: z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())]),
+  // Images attached to the state, sent as `image_url` parts alongside the
+  // prompt. Additive to Jev's contract, which has no image field; requires a
+  // vision-capable model.
+  images: z.array(ImageSchema).optional(),
   model: z.string().optional(),
   questions: z.record(QuestionSchema),
 });

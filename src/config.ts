@@ -42,6 +42,10 @@ export interface ServerConfig {
   discoverModels: boolean;
   corsOrigins: string[];
   rateLimitRpm: number;
+  // Largest accepted JSON body, in megabytes. Base64 inflates an image by about a
+  // third, so a single screenshot can be several megabytes on the wire before
+  // any question is added; the default leaves room for one such request.
+  bodyLimitMb: number;
 }
 
 export class ConfigError extends Error {
@@ -233,6 +237,7 @@ export function getConfig(): ServerConfig {
     discoverModels: discoverFlag ?? isOpenRouter(baseURL),
     corsOrigins: envList("CORS_ORIGIN"),
     rateLimitRpm: envInt("RATE_LIMIT_RPM", 0),
+    bodyLimitMb: Math.max(1, envInt("MAX_BODY_MB", 25)),
   };
 }
 
