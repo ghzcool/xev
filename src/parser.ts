@@ -283,10 +283,14 @@ function parseValuePairRuns(content: string): { values: LLMValues; start: number
   return runs;
 }
 
-// Everything before the run but separators and a code fence means the model
-// said something first, which on a non-reasoning model it never does.
+// Everything before the run but separators, a code fence, and one question
+// label means the model said something first, which on a non-reasoning model it
+// never does. The label is `qN`, and the digits are optional because the run
+// starts at the index *inside* the label: `q0:0.65` gives this the single
+// character "q". That response is an answer list with a label on it, not a list
+// with prose in front of it.
 function opensTheResponse(content: string, start: number): boolean {
-  return /^\s*(?:```[a-z]*\s*)?$/i.test(content.slice(0, start));
+  return /^[\s;,]*(?:```[a-z]*\s*)?(?:q\d*[\s:]*)?$/i.test(content.slice(0, start));
 }
 
 // Fallback for LLMs that answer with the JSON template filled in.

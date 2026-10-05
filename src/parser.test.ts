@@ -240,6 +240,36 @@ test("a fenced answer list alone is not flagged as a preamble", () => {
   assert.equal(warnings, undefined);
 });
 
+test("a question key on the answer list is not prose in front of it", () => {
+  // qwen/qwen3.5-9b answers `q0:0.65` when it reads the template's question keys
+  // as the index. That is an answer list, so it must not raise the warning.
+  const content = "q0:0.65";
+  const { answers, warnings } = parse({ n: { type: "noul", instructions: "Is it nice?" } }, content);
+  assert.equal(answers.n.type === "noul" ? answers.n.noul : null, 0.65);
+  assert.equal(warnings, undefined);
+});
+
+test("a labelled answer list is read for every question it covers", () => {
+  const twoNouls: Questions = {
+    a: { type: "noul", instructions: "Is it nice?" },
+    b: { type: "noul", instructions: "Is it on a city street?" },
+  };
+  const { answers, warnings } = parse(twoNouls, "q0:0.65;1:0.1");
+  assert.equal(answers.a.type === "noul" ? answers.a.noul : null, 0.65);
+  assert.equal(answers.b.type === "noul" ? answers.b.noul : null, 0.1);
+  assert.equal(warnings, undefined);
+});
+
+test("a label does not excuse prose that still precedes the list", () => {
+  const content = "Let me think. q0:0.65";
+  const { answers, warnings } = parse({ n: { type: "noul", instructions: "Is it nice?" } }, content);
+  assert.equal(answers.n.type === "noul" ? answers.n.noul : null, 0.65);
+  assert.equal(
+    warnings?.some((w) => w.includes("text in front of the answer list")),
+    true
+  );
+});
+
 test("braces in the model's prose do not break JSON extraction", () => {
   // A greedy /\{[\s\S]*\}/ grab would run past the object into the "}" below
   // and fail to parse.
