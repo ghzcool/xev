@@ -85,6 +85,44 @@ test("score accepts 2 to 10 levels", () => {
   expectRejected({ s: scoreWithLevels(11) }, /2 to 10/);
 });
 
+// ── Blank instructions fall back to the question id ─────────────────────────
+
+test("a blank instructions field is filled in with the question id", () => {
+  const result = validate({
+    state: "hello",
+    questions: {
+      male: { type: "noul", instructions: "" },
+      female: { type: "noul", instructions: "  " },
+      age: { type: "choice", instructions: "", criteria: { adult: null } },
+      severity: { type: "score", instructions: "\n", criteria: ["low", "high"] },
+    },
+  });
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  assert.deepEqual(result.data.questions, {
+    male: { type: "noul", instructions: "male" },
+    female: { type: "noul", instructions: "female" },
+    age: { type: "choice", instructions: "age", criteria: { adult: "adult" } },
+    severity: { type: "score", instructions: "severity", criteria: ["low", "high"] },
+  });
+});
+
+test("instructions that say something are left alone", () => {
+  const result = validate(body({ nice: { type: "noul", instructions: "Is this person nice?" } }));
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const q = result.data.questions.nice;
+  assert.equal(q.instructions, "Is this person nice?");
+});
+
+test("a missing instructions field is still an error, so a typo cannot pass silently", () => {
+  // `{ male: { type: "noul" } }` would otherwise become the question "male".
+  const result = validate({ state: "hello", questions: { male: { type: "noul" } } });
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.match(result.error.error, /instructions/);
+});
+
 // ── Choice criteria are normalized, not passed through ─────────────────────
 
 test("an option with a name but no value is described by its name", () => {

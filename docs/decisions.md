@@ -338,3 +338,11 @@ Each decision entry:
 **Rationale:** The JSON fallback already reads `q0` as a question key, so this is the same reading applied to the pairs format rather than a new rule. Prose still warns, which is the point of the warning: only a label is excused, and it is excused only where it cannot be anything else.
 **Consequence:** The label's own digits are not checked against the request - the pair's digits index the value, and a label of the wrong number is no more meaningful than a missing one. `"Let me think. q0:0.65"` still raises the warning, and so does a trace. Covered by `parser.test.ts`.
 
+### A Blank Instructions Field Means The Question Id
+
+**Date:** 2026-10-02
+**Context:** `{ "male": { "type": "noul", "instructions": "" } }` reached the model as a question with an empty `Instructions:` line, which asks nothing: the model has no wording to judge and the caller gets an answer to whatever it infers. The caller already named the question - `male` is the question - and asked for the short form so the wording is not written twice.
+**Decision:** `withKeyAsInstructions` in `types.ts` fills a blank `instructions` (empty or whitespace) with the question's id, for all three question types, at the request schema where the id is available. The field stays required: a request with `instructions` missing entirely is still a 422.
+**Rationale:** The id is the only wording left, so filling it in is what the caller meant, and normalizing at the schema keeps the prompt, the placeholder map, and the parser in agreement. Keeping the field required is the part that matters for safety: zod objects are non-strict, so a client that misspells `instructions` as `instruction` would otherwise have that key stripped and the question silently become its own id with no error anywhere.
+**Consequence:** This is the one case where a caller's question id reaches the model, since it becomes the instructions text; the response template still keys questions as `q0`, `q1`, ... and nothing else exposes the id. `prompt.test.ts`'s "ids are absent from the prompt" guarantee holds for every question that has wording. Documented in the MCP tool description, which is the only documentation a third-party model reads. Covered by `validate.test.ts` and `prompt.test.ts`.
+

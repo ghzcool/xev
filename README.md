@@ -369,6 +369,7 @@ ignore unknown fields are unaffected.
 - `confidence` = `clamp01((n * max_probability - 1) / (n - 1))`, computed on full-precision probabilities — Jev's formula.
 - Score `legend` is returned as the criteria you sent: strings stay strings, object/array levels stay structured.
 - A choice option can be written as `"optionKey": null` when the key says it all; it is described by its own name. An option with an empty name is dropped.
+- `instructions: ""` (or blank) is filled in with the question id, so `{"male": {"type": "noul", "instructions": ""}}` asks "male". The field is still required, so a misspelled `instructions` is a 422.
 
 ## Usage with curl
 

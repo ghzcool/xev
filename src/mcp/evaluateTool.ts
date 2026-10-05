@@ -29,7 +29,9 @@ visible in one. This needs a vision-capable model, and base64 image data is expe
 context window - describe the image in \`state\` instead unless the picture genuinely carries
 information the text does not.
 
-Each question has a "type" and "instructions" (a string, or an object/array with more detail):
+Each question has a "type" and "instructions" (a string, or an object/array with more detail).
+Leave "instructions" as "" and the question id is used as the wording instead, so {"male": {"type":
+"noul", "instructions": ""}} asks "male":
 
 - "choice" — also needs "criteria": an object of optionKey -> what that option means
   (a string, object, or array). 1 to 255 options. Answers come back as the winning key plus a
@@ -58,8 +60,9 @@ const QUESTIONS_DESCRIPTION = `Map of question id -> question, where a question 
   { "type": "score",  "instructions": "...", "criteria": ["level 0", "level 1", ...] }
   { "type": "noul",   "instructions": "..." }
 At least one question is required. "instructions" may also be an object or an array for extra
-detail. Choice accepts 1-255 options; score accepts 2-10 levels. A choice option given as
-"optionKey": null is described by its own key, and an option with an empty key is dropped.`;
+detail, and an empty string is replaced by the question id. Choice accepts 1-255 options; score
+accepts 2-10 levels. A choice option given as "optionKey": null is described by its own key, and
+an option with an empty key is dropped.`;
 
 const STATE_DESCRIPTION = `The thing being evaluated. A string (e.g. a support ticket, a diff, a
 paragraph) or a JSON object/array with whatever context the questions need. Keep it focused:

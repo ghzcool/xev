@@ -84,6 +84,23 @@ export const ImageSchema = z.object({
 export type Image = z.infer<typeof ImageSchema>;
 
 // ── Request ─────────────────────────────────────────────────────────────────
+// A question with a blank `instructions` is a question with no wording, and the
+// id is the only thing left that says what it is. Filling it in is the caller's
+// request, and it is the one place an id reaches the model: every other question
+// is still addressed as `q0`, `q1`, ... in the prompt.
+function withKeyAsInstructions(
+  questions: Record<string, Question>
+): Record<string, Question> {
+  const filled: Record<string, Question> = {};
+  for (const [id, question] of Object.entries(questions)) {
+    const blank =
+      typeof question.instructions === "string" &&
+      question.instructions.trim() === "";
+    filled[id] = blank ? { ...question, instructions: id } : question;
+  }
+  return filled;
+}
+
 // `model` is optional: Jev clients either omit it or send the "jev-latest"
 // alias, and index.ts falls back to LLM_MODEL in both cases.
 export const SystemOneRequestSchema = z.object({
@@ -93,7 +110,7 @@ export const SystemOneRequestSchema = z.object({
   // vision-capable model.
   images: z.array(ImageSchema).optional(),
   model: z.string().optional(),
-  questions: z.record(QuestionSchema),
+  questions: z.record(QuestionSchema).transform(withKeyAsInstructions),
 });
 
 export type SystemOneRequest = z.infer<typeof SystemOneRequestSchema>;

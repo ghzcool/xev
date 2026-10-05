@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildPrompt, buildPlaceholderMap, bindQuestions } from "./prompt";
+import { validateRequest } from "./validate";
 import type { Question } from "./types";
 
 type Questions = Record<string, Question>;
@@ -26,6 +27,20 @@ test("the caller's question ids are absent from the prompt", () => {
   for (const id of Object.keys(MIXED)) {
     assert.equal(prompt.includes(id), false, `prompt leaked question id "${id}"`);
   }
+});
+
+test("a blank instructions field reaches the model as the question id", () => {
+  // The one way an id reaches the model: the caller left the wording empty, so
+  // the id is the question. It is still not a template key.
+  const result = validateRequest({
+    state: "hello",
+    questions: { male: { type: "noul", instructions: "" } },
+  });
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const prompt = buildPrompt(result.data.state, result.data.questions);
+  assert.match(prompt, /Instructions: male/);
+  assert.match(prompt, /"noul": \$\{0\}/);
 });
 
 test("questions are addressed positionally as q0, q1, ...", () => {
