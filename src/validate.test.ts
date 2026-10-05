@@ -85,6 +85,36 @@ test("score accepts 2 to 10 levels", () => {
   expectRejected({ s: scoreWithLevels(11) }, /2 to 10/);
 });
 
+// ── Choice criteria are normalized, not passed through ─────────────────────
+
+test("an option with a name but no value is described by its name", () => {
+  const result = validate(
+    body({ d: { type: "choice", instructions: "x", criteria: { billing: null, bugs: "Broken" } } })
+  );
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const q = result.data.questions.d;
+  assert.equal(q.type, "choice");
+  if (q.type !== "choice") return;
+  assert.deepEqual(q.criteria, { billing: "billing", bugs: "Broken" });
+});
+
+test("an option with an empty name is dropped", () => {
+  const result = validate(
+    body({ d: { type: "choice", instructions: "x", criteria: { "": "orphan", "  ": null, bugs: "Broken" } } })
+  );
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const q = result.data.questions.d;
+  assert.equal(q.type, "choice");
+  if (q.type !== "choice") return;
+  assert.deepEqual(Object.keys(q.criteria), ["bugs"]);
+});
+
+test("a choice whose only option has an empty name has no options", () => {
+  expectRejected({ d: { type: "choice", instructions: "x", criteria: { "": null } } }, /no options/);
+});
+
 // ── Shape errors ────────────────────────────────────────────────────────────
 
 test("a choice without criteria is rejected with a message that says why", () => {

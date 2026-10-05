@@ -48,7 +48,9 @@ function serializeCriteria(
   if (type === "choice") {
     const entries = Object.entries(criteria as Record<string, unknown>).map(
       ([key, val]) => {
-        if (val === null) return `  - "${key}": (no description)`;
+        // A validated request never reaches here with a null value (the schema
+        // copies the option name in), so this only covers a direct call.
+        if (val === null) return `  - "${key}": ${key}`;
         if (typeof val === "string") return `  - "${key}": ${val}`;
         return `  - "${key}": ${JSON.stringify(val)}`;
       }
@@ -199,9 +201,10 @@ RULES:
 5. Every value must be a bare number between 0.0 and 1.0. No quotes, no units, no text.
 6. For Choice and Score questions, the values of that question MUST sum to exactly 1.0.
 7. For Noul questions, the value is a single number between 0.0 (definitely no) and 1.0 (definitely yes).
-8. Be precise. Do not split probability evenly unless truly uncertain.
-9. The keys q0, q1, ... in the RESPONSE TEMPLATE are the questions listed above, in order: q0 is the first question, q1 the second, and so on.
-10. Spend as few tokens as possible. Keep any deliberation to a minimum, then emit the list.
+8. Never answer 0 for every placeholder of a question. A question is always answered, so if the STATE supports none of its options, give the closest ones the weight instead of answering nothing.
+9. Be precise. Do not split probability evenly unless truly uncertain.
+10. The keys q0, q1, ... in the RESPONSE TEMPLATE are the questions listed above, in order: q0 is the first question, q1 the second, and so on.
+11. Spend as few tokens as possible. Keep any deliberation to a minimum, then emit the list.
 
 STATE:
 ${stateStr}${imageBlock}

@@ -34,6 +34,8 @@ Each question has a "type" and "instructions" (a string, or an object/array with
 - "choice" — also needs "criteria": an object of optionKey -> what that option means
   (a string, object, or array). 1 to 255 options. Answers come back as the winning key plus a
   probability per option. Use this for "which category / who owns this / what should we do".
+  An option may be given without a value ("what": null), in which case its key is used as its
+  description; an option with an empty key is dropped.
 
 - "score" — also needs "criteria": an ARRAY of 2 to 10 level descriptions, ordered lowest to
   highest. The index of a level is its value, so 4 levels mean the answer is 0 to 3. Answers
@@ -56,7 +58,8 @@ const QUESTIONS_DESCRIPTION = `Map of question id -> question, where a question 
   { "type": "score",  "instructions": "...", "criteria": ["level 0", "level 1", ...] }
   { "type": "noul",   "instructions": "..." }
 At least one question is required. "instructions" may also be an object or an array for extra
-detail. Choice accepts 1-255 options; score accepts 2-10 levels.`;
+detail. Choice accepts 1-255 options; score accepts 2-10 levels. A choice option given as
+"optionKey": null is described by its own key, and an option with an empty key is dropped.`;
 
 const STATE_DESCRIPTION = `The thing being evaluated. A string (e.g. a support ticket, a diff, a
 paragraph) or a JSON object/array with whatever context the questions need. Keep it focused:

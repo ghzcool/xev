@@ -368,6 +368,7 @@ ignore unknown fields are unaffected.
 - Probabilities are reported with 2 decimals and always sum to 1.
 - `confidence` = `clamp01((n * max_probability - 1) / (n - 1))`, computed on full-precision probabilities — Jev's formula.
 - Score `legend` is returned as the criteria you sent: strings stay strings, object/array levels stay structured.
+- A choice option can be written as `"optionKey": null` when the key says it all; it is described by its own name. An option with an empty name is dropped.
 
 ## Usage with curl
 
@@ -402,7 +403,7 @@ curl -X POST http://localhost:3000/v1/systemone \
 ## Development
 
 ```bash
-npm test    # 159 unit tests (node:test, no test framework dependency)
+npm test    # 180 unit tests (node:test, no test framework dependency)
 npm run build
 ```
 

@@ -1,39 +1,53 @@
 import { z } from "zod";
 
-// ── Instructions (string | object | array) ──────────────────────────────────
-const InstructionsSchema = z.union([
+// ── Descriptions (string | object | array) ───────────────────────────────────
+// The one shape every piece of prose in a request can take: instructions, choice
+// option descriptions, score levels, and the `legend` returned for them.
+const DescriptionSchema = z.union([
   z.string(),
   z.record(z.unknown()),
   z.array(z.unknown()),
 ]);
+export type Description = z.infer<typeof DescriptionSchema>;
+
+// ── Instructions ────────────────────────────────────────────────────────────
+const InstructionsSchema = DescriptionSchema;
 export type Instructions = z.infer<typeof InstructionsSchema>;
 
 // ── Question types ──────────────────────────────────────────────────────────
 const NoulQuestionSchema = z.object({
   type: z.literal("noul"),
   instructions: InstructionsSchema,
-  criteria: z
-    .object({
-      true: z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())]).optional(),
-      false: z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())]).optional(),
-    })
-    .optional(),
+  criteria: z.object({ true: InstructionsSchema.optional(), false: InstructionsSchema.optional() }).optional(),
 });
+
+// An option with a name but no description of its own falls back to its name:
+// `{ "billing": null }` describes the option exactly as well as nothing does, and
+// a null in the prompt is a null the model has to interpret. An option with an
+// empty name is dropped, since nothing is left to weigh it by.
+const ChoiceCriteriaSchema = z
+  .record(DescriptionSchema.nullable())
+  .transform(
+    (criteria): Record<string, Description> => {
+      const normalized: Record<string, Description> = {};
+      for (const [name, value] of Object.entries(criteria)) {
+        if (name.trim() === "") continue;
+        normalized[name] = value ?? name;
+      }
+      return normalized;
+    }
+  );
 
 const ChoiceQuestionSchema = z.object({
   type: z.literal("choice"),
   instructions: InstructionsSchema,
-  criteria: z.record(
-    z.union([z.string(), z.record(z.unknown()), z.array(z.unknown()), z.null()])
-  ),
+  criteria: ChoiceCriteriaSchema,
 });
 
 const ScoreQuestionSchema = z.object({
   type: z.literal("score"),
   instructions: InstructionsSchema,
-  criteria: z.array(
-    z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())])
-  ),
+  criteria: z.array(DescriptionSchema),
 });
 
 const QuestionSchema = z.union([
@@ -85,14 +99,6 @@ export const SystemOneRequestSchema = z.object({
 export type SystemOneRequest = z.infer<typeof SystemOneRequestSchema>;
 
 // ── Answer types ────────────────────────────────────────────────────────────
-// A description is returned verbatim in `legend` (Jev keeps object/array levels structured)
-export const DescriptionSchema = z.union([
-  z.string(),
-  z.record(z.unknown()),
-  z.array(z.unknown()),
-]);
-
-export type Description = z.infer<typeof DescriptionSchema>;
 
 export const NoulAnswerSchema = z.object({
   type: z.literal("noul"),

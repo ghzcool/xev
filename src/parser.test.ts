@@ -290,6 +290,8 @@ test("all-zero values are reported as a uniform distribution, with a warning", (
   assert.equal(answer.confidence, 0);
   assert.ok(response.warnings?.length === 1, "expected exactly one warning");
   assert.match(response.warnings![0], /uniform distribution/);
+  // "none of these apply" is the actual signal here, so the warning has to say so.
+  assert.match(response.warnings![0], /none of these apply/);
 });
 
 test("a partially answered question is flagged with the counts", () => {

@@ -513,8 +513,11 @@ export function parseResponse(
         `question "${id}": the model returned no usable values; answered with a uniform distribution (confidence 0)`
       );
     } else if (parsed.degenerate) {
+      // Every value zero is not the same failure as a missing answer: the model
+      // did answer, with a distribution that puts no weight on any option, which
+      // is what it does when it judges none of them applicable to the state.
       warnings.push(
-        `question "${id}": every value the model returned was 0; answered with a uniform distribution (confidence 0)`
+        `question "${id}": the model gave every option 0, which reads as "none of these apply"; answered with a uniform distribution (confidence 0)`
       );
     } else if (partial && cover) {
       warnings.push(

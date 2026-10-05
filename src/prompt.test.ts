@@ -81,6 +81,14 @@ test("the prompt states the answer format", () => {
   assert.match(prompt, /sum to exactly 1\.0/);
 });
 
+test("the prompt forbids an all-zero answer", () => {
+  // A model with no applicable option used to answer 0 for every placeholder,
+  // which is not a distribution and left the parser with a uniform guess.
+  const prompt = buildPrompt("hello", MIXED);
+  assert.match(prompt, /Never answer 0 for every placeholder/);
+  assert.match(prompt, /supports none of its options/);
+});
+
 test("state is included and object state is serialized", () => {
   const prompt = buildPrompt({ message: "hi", urgent: true }, MIXED);
   assert.match(prompt, /"message": "hi"/);
@@ -95,11 +103,13 @@ test("choice options and score levels are listed with their keys", () => {
   assert.match(prompt, /1: high/);
 });
 
-test("a choice option with no description is still listed", () => {
+test("a choice option with no description falls back to its name", () => {
   const prompt = buildPrompt("hello", {
     d: { type: "choice", instructions: "x", criteria: { a: null, b: "B" } },
   });
-  assert.match(prompt, /- "a": \(no description\)/);
+  assert.match(prompt, /- "a": a/);
+  // A null is not a description the model can read.
+  assert.equal(prompt.includes("null"), false);
 });
 
 test("noul true/false criteria are described when present", () => {
