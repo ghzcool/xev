@@ -383,3 +383,45 @@ test("a valid pair with nothing to map it onto is not blamed on the format", () 
 test("the model name is prefixed with xev-", () => {
   assert.equal(parse(CHOICE_THREE, "0:1;1:0;2:0").model, "xev-test-model");
 });
+
+// ── A bare number answers a request that asked exactly one thing ────────────
+
+const ONE_NOUL: Questions = { n: { type: "noul", instructions: "Is this person nice?" } };
+
+test("a lone number answers a single noul question", () => {
+  // qwen/qwen3.5-9b drops the `index:` prefix when there is nothing to index.
+  for (const content of ["0.5", " 0.5 ", "0.5\n", '"0.5"', "```\n0.5\n```"]) {
+    const answer = parse(ONE_NOUL, content).answers.n;
+    assert.equal(answer.type, "noul", `failed for ${JSON.stringify(content)}`);
+    if (answer.type !== "noul") return;
+    assert.equal(answer.noul, 0.5, `failed for ${JSON.stringify(content)}`);
+  }
+});
+
+test("a bare number is clamped and reported like any other noul value", () => {
+  const high = parse(ONE_NOUL, "7").answers.n;
+  if (high.type !== "noul") return assert.fail("expected a noul answer");
+  assert.equal(high.noul, 1);
+  assert.equal(parse(ONE_NOUL, "0.5").warnings, undefined);
+});
+
+test("a lone number is not an answer when the request asked more than once", () => {
+  assert.throws(() => parse(MIXED, "0.5"), (err: unknown) => err instanceof LLMResponseError);
+});
+
+test("a lone number is not an answer for a question that takes one value per option", () => {
+  // Three options need three numbers, so a single one is not a distribution.
+  assert.throws(
+    () => parse(CHOICE_THREE, "0.5"),
+    (err: unknown) => err instanceof LLMResponseError
+  );
+});
+
+test("a number inside prose is still not an answer", () => {
+  // Rescuing a number out of a sentence is how a trace donates a value it never
+  // committed to, so only a response that is nothing but the number counts.
+  assert.throws(
+    () => parse(ONE_NOUL, "I would say 0.5, though it is hard to tell."),
+    (err: unknown) => err instanceof LLMResponseError
+  );
+});

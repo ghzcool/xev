@@ -388,10 +388,38 @@ interface Candidate {
 // Within the pairs, the last run wins a tie over the union of all of them and
 // over an earlier run, because a reasoning trace comes before its answer and an
 // answer list is what the model finishes on.
+// A response that is nothing but a number. Measured against
+// `qwen/qwen3.5-9b` on LM Studio: asked one noul question it answered `0.5`,
+// dropping the `index:` prefix because there was nothing to index it by.
+const BARE_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+function unwrapFence(text: string): string {
+  const fenced = /^```[a-z]*\s*([\s\S]*?)\s*```$/i.exec(text);
+  return fenced ? fenced[1] : text;
+}
+
+// The bare number is only an answer where it cannot be anything else: one
+// placeholder in the request, and that placeholder takes a single value. Two
+// questions make the number ambiguous, and a choice or score needs one value per
+// option, so neither is rescued this way - a model that drops the prefix there
+// has not answered the question, and saying so beats guessing.
+function bareNumberCandidate(
+  content: string,
+  questions: Record<string, Question>
+): LLMRawOutput | null {
+  const placeholders = buildPlaceholderMap(questions);
+  if (placeholders.length !== 1 || placeholders[0].field !== "noul") return null;
+
+  const text = unwrapFence(content.trim()).replace(/^["'](.*)["']$/s, "$1").trim();
+  if (!BARE_NUMBER.test(text)) return null;
+
+  return { [placeholders[0].questionId]: { noul: Number.parseFloat(text) } };
+}
+
 function parseContent(
   content: string,
   questions: Record<string, Question>
-): { raw: LLMRawOutput; source: "pairs" | "json"; preamble: boolean } {
+): { raw: LLMRawOutput; source: "pairs" | "json" | "bare"; preamble: boolean } {
   const candidates: Candidate[] = [];
 
   const runs = parseValuePairRuns(content);
@@ -433,6 +461,12 @@ function parseContent(
   }
 
   if (best && bestAnswered > 0) return best;
+
+  // Nothing answered a placeholder, but a lone number is the whole answer when
+  // the request asked exactly one thing. Checked last so it can never beat a
+  // real candidate on ties.
+  const bare = bareNumberCandidate(content, questions);
+  if (bare) return { raw: bare, source: "bare", preamble: false };
 
   // Pairs were parsed but there was nothing to map them onto, which means the
   // request carried no question values. Saying "no pairs found" here would be
